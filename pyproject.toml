@@ -52,6 +52,7 @@ markers = [
   "slow: long-running test (excluded from make test-fast and the Stop hook)",
   "gpu: needs a CUDA GPU (opt in with ACIS_RUN_GPU=1)",
   "network: needs network access (opt in with ACIS_RUN_NETWORK=1)",
+  "dataset: needs the allow-listed dataset assets (skipped until `make fetch` has run)",
 ]
 
 [tool.ruff]
@@ -69,6 +70,8 @@ ignore = ["C408"]
 "tests/**" = ["E501", "SIM105", "UP035"]
 
 [tool.mypy]
-python_version = "3.11"
+# 3.12 is the pinned interpreter (.python-version); the numpy 2.5 stubs use `type` statements, which mypy only
+# accepts when it is told to check against 3.12+.
+python_version = "3.12"
 ignore_missing_imports = true
 warn_unused_ignores = true

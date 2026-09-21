@@ -1,0 +1,61 @@
+{
+  "assets": {
+    "README.md": "310a61851aec788cd0e85afd1d514b29766a0e70887b0ffa5fe120176cdb94af",
+    "corpus/corpus-00000-of-00001.parquet": "ecf6e54b07a9d75982859ed2d6f30a48ee7707ac06e607dff6b3bbca1062d8bc",
+    "data/train-00000-of-00001.parquet": "2243b84040afb143198f731799fe43eaaa1ad1948db59d453ddc42abcff920ed",
+    "queries/queries-00000-of-00001.parquet": "438fff87ec543965e36ea3c8ab071b4489ac09b700abb08b8ce7fdca3923e3a1"
+  },
+  "built_ts": 1789991958.3931267,
+  "dataset": {
+    "repo": "CoIR-Retrieval/apps",
+    "revision": "f22508f96b7a36c2415181ed8bb76f76e04ae2d5",
+    "task": "AppsRetrieval"
+  },
+  "dev_h_fold": 4,
+  "fold_key": "sha256_query_text",
+  "folds": 5,
+  "sets": {
+    "corpus": {
+      "n": 8765,
+      "sha256": "028e67190ec3aea5616b7049b91dd24d39bd94483b4eebdec6a27febfb6ab4dd"
+    },
+    "dev_h": {
+      "n": 1012,
+      "sha256": "90f47bd7153f5df05b38d091b0e71b42e92c095e23c440b0fe0c7ead07afdaf4"
+    },
+    "dev_queries": {
+      "n": 5000,
+      "sha256": "8266976589401329312ed6853e9080ffc25ee1e891f0b0ed4d03afec5f1170a9"
+    },
+    "fold_0": {
+      "n": 1027,
+      "sha256": "1f56e3f688b0543e0ff3824aefe6c7acc0dde3c42dc0ca28fbdbafcdc269891e"
+    },
+    "fold_1": {
+      "n": 940,
+      "sha256": "c4e72ce6a8d0f831cff2213ecd2b111ca2ceecf601cc0ee3d2f6624ee6d600ef"
+    },
+    "fold_2": {
+      "n": 985,
+      "sha256": "61b65dbe779322b1ee2f85259556ca9d3a85d97b04917d1d85390247e596de2e"
+    },
+    "fold_3": {
+      "n": 1036,
+      "sha256": "12916a77a2355506db62385425cf9a1d9960551e16b2141dfe7ee59f0bba623d"
+    },
+    "fold_4": {
+      "n": 1012,
+      "sha256": "90f47bd7153f5df05b38d091b0e71b42e92c095e23c440b0fe0c7ead07afdaf4"
+    },
+    "holdout_queries": {
+      "n": 3765,
+      "sha256": "9540784ea1e9527f9009016a95cc8957c2e21f9ca4f2607b397450052607c184"
+    },
+    "oof_pool": {
+      "n": 5000,
+      "sha256": "8266976589401329312ed6853e9080ffc25ee1e891f0b0ed4d03afec5f1170a9"
+    }
+  },
+  "split_lock_hash": "c7758a49cb848515f9e145ad9e8a22c650a8785e2e594055a0646a2858edfba7",
+  "version": 1
+}

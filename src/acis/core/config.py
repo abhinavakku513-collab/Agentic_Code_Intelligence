@@ -59,8 +59,22 @@ def _thaw(value: Any) -> Any:
 
 
 def _ranking_relevant(value: Any) -> Any:
+    """Project a config onto its ranking-relevant part.
+
+    A section that holds nothing but operational knobs collapses to `{}` and is then dropped entirely: otherwise
+    `run: {threads: 8}` and no `run:` section at all would hash differently, and setting a thread count would move
+    the model revision.
+    """
     if isinstance(value, Mapping):
-        return {str(k): _ranking_relevant(v) for k, v in value.items() if str(k) not in OPERATIONAL_KEYS}
+        out = {}
+        for key, item in value.items():
+            if str(key) in OPERATIONAL_KEYS:
+                continue
+            projected = _ranking_relevant(item)
+            if isinstance(projected, dict) and not projected and isinstance(item, Mapping):
+                continue  # the whole sub-section was operational
+            out[str(key)] = projected
+        return out
     if isinstance(value, (list, tuple)):
         return [_ranking_relevant(v) for v in value]
     return value
@@ -105,7 +119,8 @@ class FrozenConfig:
         return value if isinstance(value, Mapping) else MappingProxyType({})
 
     def as_dict(self) -> dict[str, Any]:
-        return _thaw(self.raw)
+        thawed: dict[str, Any] = _thaw(self.raw)
+        return thawed
 
     def with_overrides(self, **dotted_values: Any) -> FrozenConfig:
         """Return a new config with dotted keys replaced (used by sweeps and tests, never by the official run)."""
@@ -142,7 +157,14 @@ class FrozenConfig:
 
 def compute_config_hash(data: Mapping[str, Any]) -> str:
     """Hash of the ranking-relevant projection of `data` (docs/spec/06 §4)."""
-    relevant = {k: _ranking_relevant(v) for k, v in data.items() if k not in OPERATIONAL_SECTIONS}
+    relevant: dict[str, Any] = {}
+    for key, value in data.items():
+        if key in OPERATIONAL_SECTIONS:
+            continue
+        projected = _ranking_relevant(value)
+        if isinstance(projected, dict) and not projected and isinstance(value, Mapping):
+            continue
+        relevant[str(key)] = projected
     return hash_obj(relevant)
 
 
