@@ -1,0 +1,15 @@
+{
+  "adapter_invocations": 0,
+  "dataset": "mteb/StackOverflowQA",
+  "defines_index_and_search": false,
+  "dispatch": "_EncoderSurface",
+  "encode_calls": 2,
+  "evaluation_time_s": 71.421,
+  "mode": "B",
+  "mrr_at_10": 0.502225,
+  "ndcg_at_10": 0.52235,
+  "note": "harness validation with the model-free stand-in encoder; not an accuracy claim",
+  "reg_cache": "/home/acis/acis/.acis-reg",
+  "split": "test",
+  "task": "StackOverflowQA"
+}

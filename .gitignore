@@ -19,3 +19,4 @@ dist/
 *.parquet
 *.safetensors
 .acis-home/
+.acis-reg/

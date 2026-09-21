@@ -40,9 +40,23 @@ def home_path(*parts: str, create_parent: bool = False) -> Path:
     return p
 
 
+def reg_home() -> Path:
+    """Cache root for third-party REG benchmarks — deliberately **outside** `ACIS_HOME`.
+
+    REG tasks (CosQA, StackOverflowQA, CodeSearchNet, …) ship their own `qrels/test-*` files. Those are other
+    benchmarks' labels, not ours, but they match the sealed-name patterns, and the seal check scans `ACIS_HOME`
+    with deliberately broad patterns. Keeping them apart means the check can stay broad without crying wolf, and
+    `ACIS_HOME` holds only the allow-listed APPS assets.
+    """
+    env = os.environ.get("ACIS_REG_HOME")
+    home = Path(env).resolve() if env else acis_root() / ".acis-reg"
+    home.mkdir(parents=True, exist_ok=True)
+    return home
+
+
 def sealed_root() -> Path:
     """Physical TEST seal (D19). Read only by `acis.eval.final` / `acis eval official`."""
     return Path(os.environ.get("ACIS_SEALED_HOME", str(Path.home() / ".acis-sealed"))).resolve()
 
 
-__all__ = ["acis_home", "acis_root", "home_path", "repo_path", "sealed_root"]
+__all__ = ["acis_home", "acis_root", "home_path", "reg_home", "repo_path", "sealed_root"]
