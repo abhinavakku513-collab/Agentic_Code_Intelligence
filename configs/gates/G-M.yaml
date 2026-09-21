@@ -1,0 +1,9 @@
+# Encoder-selection gate (D4). Decided by `make gate GATE=G-M`; do not edit after a decision — supersede via /adr.
+status: undecided
+size_tolerance_pts: 1.0        # smallest candidate within this many NDCG@10 points of the best
+slow_pass_hours: 2.0           # if the best candidate's projected cold pass on the declared host exceeds this ...
+slow_tolerance_pts: 3.0        # ... use this tolerance instead [JUDGMENT; revisit when organizers publish weights]
+slo_cold_pass_hours: 4.0       # hard cap
+envelope: {max_params_b: 1.0, cpu_capable: true, permissive_licence: true, safetensors: true, trust_remote_code: false, api: false}
+decision: null
+evidence: null                 # [ledger:<run_id>]

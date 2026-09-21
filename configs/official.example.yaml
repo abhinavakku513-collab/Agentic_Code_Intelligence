@@ -1,0 +1,11 @@
+# Copy to configs/official.yaml in Phase 5 and freeze (its hash goes into the ledger). Values marked <..> are decided by gates.
+run:      {mode: AB, strict: true, device: cpu, threads: auto_physical, cold_official: true, test_touch_budget: 6}
+model:    {config: configs/models/<G-M decision>.yaml, base_commit: "<sha>", adapter: null, alpha: null, numeric_profile: cpu-fp32}
+prep:     {query: {version: q1, task: "<G1 per route>", view: "<G1>", max_tokens: 1024, head: 768, tail: 256}, doc: {version: d1, max_tokens: 1024, head: 768, tail: 256}}
+lexical:  {tokenizer: bm25s-default, k1: 1.2, b: 0.75}
+routing:  {version: v1.1, tau_ood: "<dev>", rho: "<dev>", generic_instruction: T3}
+retrieve: {dense_k: 100, lexical_k: 30, union_cap: 100, prf: {enabled: false, m: 3, alpha: 0.2}, top_k_out: 1000}
+ranker:   {type: lightgbm_lambdarank, model_hash: "<sha>", group_dropout: 0.25, fallbacks: [weighted_fusion, dense_only]}
+compose:  {mode_a_scores: rank_derived}
+gates:    {G_M: "<ledger>", G1: "<ledger>", G2: "<ledger>", G3: "<ledger>", G4: "<ledger>", G5: "<ledger>", G_AB: "<ledger>", G6: "<ledger>", G_OOD: "<ledger>"}
+integrity: {split_lock_hash: "<sha>"}

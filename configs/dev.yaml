@@ -1,0 +1,6 @@
+# Dev configuration seed (never touches TEST). Phase 1/2 fill the sections; paths resolve from the repo root.
+run:      {kind: dev, device: cpu, threads: auto_physical, seed: 0}
+data:     {split: train, folds: 5, fold_key: sha256_query_text, dev_h_fold: 4, corpus: full_8765}
+model:    {config: configs/models/qwen3-embedding-0.6b.yaml, numeric_profile: cpu-fp32}
+prep:     {query: {version: q1, view: V0, max_tokens: 1024, head: 768, tail: 256}, doc: {version: d1, max_tokens: 1024, head: 768, tail: 256}}
+retrieve: {dense_k: 100, lexical_k: 30, union_cap: 100, prf: {enabled: false}, top_k_out: 1000}

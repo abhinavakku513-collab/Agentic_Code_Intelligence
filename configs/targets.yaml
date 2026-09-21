@@ -1,0 +1,4 @@
+# OWNER-set targets (after seeing G0.5 zero-shot numbers). The accuracy-escalation ladder (docs/spec/08 §3) works until these are met or headroom < 0.5 pt.
+dev_ndcg10_target: null        # e.g. the number you need to be competitive on the OOF pool
+cold_pass_hours_target: null   # official cold pass on the declared host
+notes: ""

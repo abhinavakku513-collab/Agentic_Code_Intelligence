@@ -1,0 +1,65 @@
+# Phase-0 SEED — the toolchain skeleton the hooks, skills and Makefile presume.
+# Phase 0 turns it into a locked environment (`uv lock` with hashes); versions below are lower bounds except mteb (pinned, verified 2.21.0).
+# Dependencies follow docs/adr/0001-dependency-allowlist.md; anything else needs an ADR. CPU-only torch index: configure in Phase 0 (uv index) and record in ADR-0001.
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "acis"
+version = "0.0.0"
+description = "ACIS — Agentic Code Intelligence: a local, offline, CPU-first code-retrieval engine"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "numpy>=1.26", "scipy>=1.14", "pydantic>=2.11", "pyyaml>=6.0", "structlog>=24.1", "orjson>=3.10",
+  "torch>=2.4", "transformers>=4.51", "safetensors>=0.4.3", "tokenizers>=0.20", "sentence-transformers>=3.0",
+  "lightgbm>=4.3", "bm25s>=0.2", "mteb==2.21.0", "datasets>=2.19", "pytrec-eval-terrier>=0.5.6",
+  "huggingface-hub>=0.24", "scikit-learn>=1.4", "datasketch>=1.6", "zstandard>=0.22", "rapidfuzz>=3.9",
+  "fastapi>=0.110", "uvicorn>=0.29", "prometheus-client>=0.20",
+]
+
+[project.optional-dependencies]
+train = ["peft>=0.11", "accelerate>=0.30"]   # dev machine / GPU notebook only; never imported at inference
+speed = ["onnxruntime>=1.18"]                # only after gate G6
+
+[project.scripts]
+acis = "acis.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "hypothesis>=6.100", "ruff>=0.5", "mypy>=1.10", "bandit>=1.7", "pip-audit>=2.7", "pip-licenses>=4.4", "types-PyYAML"]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/acis"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+markers = [
+  "slow: long-running test (excluded from make test-fast and the Stop hook)",
+  "gpu: needs a CUDA GPU (opt in with ACIS_RUN_GPU=1)",
+  "network: needs network access (opt in with ACIS_RUN_NETWORK=1)",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+src = ["src", "tests"]
+# docs (incl. markdown code blocks and non-authoritative docs/reference) and the protected stdlib hook scripts are not linted
+extend-exclude = ["docs", ".claude/hooks"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "C4", "SIM"]
+ignore = ["C408"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501", "SIM105", "UP035"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
