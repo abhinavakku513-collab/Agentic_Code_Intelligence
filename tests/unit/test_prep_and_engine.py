@@ -225,6 +225,30 @@ def test_lexical_only_engine_records_a_degradation(tiny_corpus):
     assert "dense" in snap.missing_channels
 
 
+def test_short_channel_results_are_padded_without_using_corpus_position(tiny_corpus):
+    """INV-10 needs `min(top_k, N)` entries even when a channel returns fewer; P5 needs the padding to be
+
+    independent of corpus arrangement. Both are checked here because the padding path is easy to leave untested:
+    bm25s normally returns `k` hits, so it only triggers when a channel genuinely returns a short list.
+    """
+    forward = AcisEngine.from_config(freeze_config(DEFAULT_CONFIG), encoder=HashingEncoder())
+    reverse = AcisEngine.from_config(freeze_config(DEFAULT_CONFIG), encoder=HashingEncoder())
+    snap_f = forward.build_snapshot([Snippet(handle=i, text=t) for i, t in tiny_corpus], source="x")
+    snap_r = reverse.build_snapshot([Snippet(handle=i, text=t) for i, t in reversed(tiny_corpus)], source="x")
+    data_f, data_r = forward.snapshot_data(snap_f), reverse.snapshot_data(snap_r)
+
+    partial_f = [("d5", 2.0), ("d1", 1.0)]  # a channel that retrieved only two documents
+    partial_r = [("d5", 2.0), ("d1", 1.0)]
+    padded_f = AcisEngine._extend_with_unretrieved(data_f, partial_f, 6)
+    padded_r = AcisEngine._extend_with_unretrieved(data_r, partial_r, 6)
+
+    assert len(padded_f) == 6
+    assert [d for d, _ in padded_f[:2]] == ["d5", "d1"]  # retrieved documents keep their order
+    assert [d for d, _ in padded_f] == [d for d, _ in padded_r]  # and the tail ignores corpus arrangement
+    tail_scores = {s for _, s in padded_f[2:]}
+    assert len(tail_scores) == 1 and max(tail_scores) < min(s for _, s in partial_f)
+
+
 def test_track_b_methods_are_frozen_but_not_implemented(engine):
     eng, _ = engine
     from acis.core.types import EvolveRequest, SourceSpec

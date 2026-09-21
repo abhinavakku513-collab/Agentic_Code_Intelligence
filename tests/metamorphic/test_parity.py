@@ -102,6 +102,28 @@ def test_b0_metrics_equal_mteb_and_pytrec_eval_to_1e9(kind):
         assert ours[key] == pytest.approx(value, abs=TOLERANCE), f"{kind}: {key}"
 
 
+def test_b0_metrics_hold_for_graded_and_multi_relevant_qrels():
+    """AppsRetrieval has one binary-relevant document per query; the metric code must not be specialised to that.
+
+    Graded gains, several relevant documents per query and a query with no relevant document at all are all cases
+    the shared metric code could get wrong without a single dataset test noticing.
+    """
+    rng = random.Random(3)
+    doc_ids = [f"d{i}" for i in range(200)]
+    qrels: dict[str, dict[str, int]] = {}
+    run: dict[str, dict[str, float]] = {}
+    for q in range(60):
+        qrels[f"q{q}"] = {d: rng.choice([1, 1, 2, 3]) for d in rng.sample(doc_ids, rng.randint(1, 6))}
+        run[f"q{q}"] = {d: round(rng.uniform(0, 3), 6) for d in rng.sample(doc_ids, 100)}
+    qrels["qz"] = {"d999": 0}  # judged, but nothing relevant
+    run["qz"] = {d: 1.0 / (i + 1) for i, d in enumerate(doc_ids[:10])}
+
+    ours = score_run(qrels, run, K_VALUES)
+    theirs = score_run_reference(qrels, run, K_VALUES)
+    for key, value in theirs.items():
+        assert ours[key] == pytest.approx(value, abs=TOLERANCE), key
+
+
 def test_b0_oracle_scores_exactly_one():
     docs = _fixture_corpus()
     qrels, _ = _qrels_and_queries(docs)
@@ -153,6 +175,24 @@ def test_p5_corpus_order_does_not_change_the_ranking():
         a = [d for d, _ in engine_a.search_batch(snap_a, [q], [text], top_k=10)[q]]
         b = [d for d, _ in engine_b.search_batch(snap_b, [q], [text], top_k=10)[q]]
         assert a == b, q
+
+
+def test_p5_holds_for_the_lexical_channel():
+    """Including the degenerate case: a query matching no term scores every document identically, and a ranking of
+    all-tied documents is exactly where corpus position would leak in if the tie-break used it."""
+    from acis.core.config import freeze_config as _freeze
+    from acis.engine.core import DEFAULT_CONFIG as _CFG
+
+    docs = _fixture_corpus()
+    cfg = _freeze({**_CFG, "run": {**_CFG["run"], "channel": "lexical"}})
+
+    def rank(corpus, query):
+        engine = AcisEngine.from_config(cfg, encoder=None)
+        snap = engine.build_snapshot([Snippet(handle=i, text=t) for i, t in corpus], source="parity")
+        return [d for d, _ in engine.search_batch(snap, ["q"], [query], top_k=20)["q"]]
+
+    for query in ("graph bfs queue", "zzzz nothing matches this query at all"):
+        assert rank(docs, query) == rank(list(reversed(docs)), query), query
 
 
 def test_p5_relabelling_documents_does_not_change_the_ranking():

@@ -337,10 +337,13 @@ class AcisEngine:
             out[str(qid)] = [(d, s) for d, s in full if d in allowed_set][:top_k]
         return out
 
-    def _rank_one(self, data: SnapshotData, text: str, *, top_k: int, strict: bool) -> list[tuple[str, float]]:
+    def _rank_one(
+        self, data: SnapshotData, text: str, *, top_k: int, strict: bool, counters: Counters | None = None
+    ) -> list[tuple[str, float]]:
         query, _truncated = self.normalise_query(text)
         mode = str(self.config.get("run.channel", "auto"))
         dense_available, _ = self._channels()
+        sink = counters if counters is not None else self.counters
 
         if mode in ("auto", "dense") and dense_available:
             ranking = self._dense_ranking(data, query)
@@ -351,30 +354,30 @@ class AcisEngine:
         elif mode == "hybrid":
             raise NotReady("channel fusion is decided by gate G2 in Phase 4; it does not exist yet")
         else:
-            degradation("dense_unavailable", "lexical-only ranking", strict=strict, counters=self.counters)
+            degradation("dense_unavailable", "lexical-only ranking", strict=strict, counters=sink)
             ranking = self._lexical_ranking(data, query, data.size)
 
         if len(ranking) < min(top_k, data.size):
-            ranking = self._extend_with_corpus_order(data, ranking, min(top_k, data.size))
+            ranking = self._extend_with_unretrieved(data, ranking, min(top_k, data.size))
         return self._stable_order(data, ranking)[:top_k]
 
-    def _extend_with_corpus_order(
-        self, data: SnapshotData, ranking: Sequence[tuple[str, float]], want: int
+    @staticmethod
+    def _extend_with_unretrieved(
+        data: SnapshotData, ranking: Sequence[tuple[str, float]], want: int
     ) -> list[tuple[str, float]]:
-        """A channel may return fewer than `min(top_k, N)` hits (BM25 with no matching term). The tail is the
+        """Pad a short ranking so INV-10 still returns `min(top_k, N)` entries.
 
-        remaining documents in corpus order, scored below every retrieved document, so INV-10 still holds.
+        A channel can return fewer hits than asked for — BM25 with no matching term is the ordinary case. The
+        documents it did not retrieve are all equally unranked, so they all get **one** score below every retrieved
+        document and `_stable_order` sorts them by content hash. Giving them descending scores in corpus order
+        instead would make the tail depend on how the corpus happens to be arranged, which is exactly what parity
+        P5 forbids.
         """
         seen = {d for d, _ in ranking}
-        out = list(ranking)
-        floor = min((s for _, s in ranking), default=0.0)
-        for doc_id in data.doc_ids:
-            if len(out) >= want:
-                break
-            if doc_id not in seen:
-                floor -= 1.0
-                out.append((doc_id, floor))
-        return out
+        floor = min((s for _, s in ranking), default=0.0) - 1.0
+        unretrieved = [(doc_id, floor) for doc_id in data.doc_ids if doc_id not in seen]
+        padding = AcisEngine._stable_order(data, unretrieved)[: max(0, want - len(ranking))]
+        return [*ranking, *padding]
 
     # -- the single-query surface ---------------------------------------------------------------------------------
     def search(self, req: SearchRequest) -> SearchResponse:
@@ -393,7 +396,14 @@ class AcisEngine:
         strict = bool(self.config.strict)
 
         t_rank = time.perf_counter()
-        ranked = self._rank_one(data, req.query, top_k=top_k, strict=strict)
+        # Per-request counters: `SearchResponse.degradations` must describe *this* request, not everything the
+        # process has degraded since start-up. They are merged into the engine's totals for the run manifest.
+        request_counters = Counters()
+        ranked = self._rank_one(data, req.query, top_k=top_k, strict=strict, counters=request_counters)
+        for name, count in request_counters.snapshot().items():
+            self.counters.incr(name, count)
+        for event in request_counters.degradations():
+            self.counters.note(event)
         hits = [
             Hit(
                 rank=rank,
@@ -423,7 +433,7 @@ class AcisEngine:
                 "rank": round((time.perf_counter() - t_rank) * 1000, 3),
                 "total": round(total_ms, 3),
             },
-            degradations=self.counters.degradations(),
+            degradations=request_counters.degradations(),
         )
 
     def _resolve_snapshot(self, req: SearchRequest) -> SnapshotData:
