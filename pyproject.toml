@@ -31,6 +31,15 @@ dev = ["pytest>=8", "hypothesis>=6.100", "ruff>=0.5", "mypy>=1.10", "bandit>=1.7
 [tool.uv]
 default-groups = ["dev"]
 
+# CPU-only torch (D15: official inference is device=cpu; no CUDA wheels in the lock). Recorded in ADR-0001.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/acis"]
 

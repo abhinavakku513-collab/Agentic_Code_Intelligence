@@ -1,0 +1,50 @@
+{
+  "dirty": true,
+  "environment": {
+    "acis_home": "/home/acis/acis/.acis-home",
+    "acis_root": "/home/acis/acis",
+    "dataset_manifest": "/home/acis/acis/.acis-home/assets_manifest.json",
+    "disk_free_gb": 950.51,
+    "hf_datasets_offline": "unset",
+    "hf_hub_offline": "unset",
+    "seal_ok": true,
+    "sealed_files_in_dev_env": [],
+    "sealed_root": "/home/acis/.acis-sealed",
+    "sealed_root_exists": false
+  },
+  "git_sha": "ca2c3969237f670d13210d36bf80d5c8e198aaef",
+  "gpu": "none",
+  "hardware": {
+    "cpu": "AMD Ryzen 7 170 with Radeon Graphics",
+    "isa": [
+      "avx2"
+    ],
+    "logical_cores": 16,
+    "physical_cores": 8,
+    "ram_gb": 9.71
+  },
+  "packages": {
+    "bm25s": "0.3.11",
+    "datasets": "5.0.1",
+    "lightgbm": "4.7.0",
+    "mteb": "2.21.0",
+    "numpy": "2.5.3",
+    "python": "3.12.3",
+    "pytrec-eval-terrier": "0.5.10",
+    "scipy": "1.18.1",
+    "torch": "2.14.0+cpu",
+    "transformers": "5.17.0"
+  },
+  "platform": {
+    "machine": "x86_64",
+    "python": "3.12.3",
+    "release": "6.18.33.2-microsoft-standard-WSL2",
+    "system": "Linux"
+  },
+  "threads": 8,
+  "throughput": {
+    "gemm_fp32_gflops_1024": 157.6
+  },
+  "tier": "T-min",
+  "ts": 1789991951.3204775
+}
