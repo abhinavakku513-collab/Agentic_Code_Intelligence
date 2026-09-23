@@ -95,8 +95,9 @@ def test_a_non_permissive_model_needs_an_explicit_reference_flag(tmp_path, monke
     assert fetched.reference_only and fetched.files
 
 
-def test_a_moving_revision_is_resolved_to_a_commit_and_recorded():
+def test_a_moving_revision_is_resolved_to_a_commit_and_recorded(monkeypatch):
     """A tag can move under us; a commit cannot. What was downloaded has to be nameable afterwards."""
+    monkeypatch.setattr(modelfetch, "load_card", lambda key: _card_with(base_commit=None))
     hub = FakeHub(REPO_FILES, commit="b" * 40)
     fetched = modelfetch.fetch_model(CARD, hub=hub)
     assert fetched.commit == "b" * 40
@@ -113,6 +114,7 @@ def test_the_pinned_commit_is_used_when_the_card_has_one(monkeypatch):
 def test_pinning_writes_the_commit_and_every_file_hash_into_the_card(tmp_path, monkeypatch):
     card_path = tmp_path / f"{CARD}.yaml"
     card_path.write_text(json.dumps({"name": "Qwen/Q", "pooling": "last_token", "normalize": True}), encoding="utf-8")
+    monkeypatch.setattr(modelfetch, "load_card", lambda key: _card_with(base_commit=None))
     hub = FakeHub(REPO_FILES, commit="e" * 40)
 
     fetched = modelfetch.fetch_model(CARD, hub=hub)

@@ -17,7 +17,7 @@ in this phase is a model-free stand-in encoder that a strict run refuses to serv
 | Adapter v0 validated on dev **and** on a public non-APPS mteb code task | **PASS** in both modes — see below | `runs/reg_validation_mode{A,B}.json`, `tests/integration/test_dev_harness.py` |
 | `verify-submission` v0 | **PASS** — each test breaks exactly one thing; a SKIP is never counted as a pass | `tests/integration/test_verify_submission.py` |
 | Official script | **PASS** — the pipeline is executed end to end on a synthetic task (both modes, run files, manifest, ledger, checksums, verification); the *held-out* run stays the owner's, and refuses a non-sealed `HF_HOME`, a dirty tree or an exhausted budget | `src/acis/eval/official.py`, `tests/integration/test_official_dry_run.py`, `tests/security/test_seal.py` |
-| Not yet: dense encoder runtime, LTR, held-out evaluation | Honoured — `mode="hybrid"` raises rather than inventing an ungated fusion; the dense runtime is Phase 2 | `tests/unit/test_prep_and_engine.py::test_hybrid_mode_is_not_invented_before_its_gate` |
+| Not yet: dense encoder runtime, LTR, held-out evaluation | Honoured — `mode="hybrid"` raises rather than inventing an ungated fusion; the dense runtime is Phase 2 | `tests/unit/test_prep_and_engine.py` (Phase 1's `test_hybrid_mode_is_not_invented_before_its_gate`; Phase 4 replaced it with `test_hybrid_mode_fuses_both_channels_and_says_what_it_fell_back_to` when fusion actually landed) |
 
 ## Ladder (dev split, all 5,000 queries)
 

@@ -230,13 +230,28 @@ def test_unknown_version_raises_not_found(engine):
         eng.search(SearchRequest(query="gcd", version="v99"))
 
 
-def test_hybrid_mode_is_not_invented_before_its_gate(tiny_corpus):
-    """Phase 4 and gate G2 decide fusion; until then the engine says so instead of guessing."""
+def test_hybrid_mode_fuses_both_channels_and_says_what_it_fell_back_to(tiny_corpus):
+    """Phase 4: fusion exists, and without a trained ranker it is reciprocal-rank fusion — counted, not silent.
+
+    The fallback chain is the point (INV-7): no ranker is a *degradation*, not a quiet identity, so a run
+    manifest says whether the learned ranker actually served the query.
+    """
     cfg = freeze_config({**DEFAULT_CONFIG, "run": {**DEFAULT_CONFIG["run"], "channel": "hybrid"}})
     eng = AcisEngine.from_config(cfg, encoder=HashingEncoder())
     snap = eng.build_snapshot([Snippet(handle=i, text=t) for i, t in tiny_corpus], source="x")
-    with pytest.raises(NotReady, match="G2"):
-        eng.search_batch(snap, ["q"], ["gcd"], top_k=3)
+
+    hits = eng.search_batch(snap, ["q"], ["gcd while loop"], top_k=3)["q"]
+    assert len(hits) == 3
+    assert [d for d, _ in hits] == sorted({d for d, _ in hits}, key=[d for d, _ in hits].index)
+    assert eng.counters.get("degradation.ltr_unavailable") >= 1
+
+
+def test_hybrid_mode_refuses_to_degrade_silently_in_a_strict_run(tiny_corpus):
+    cfg = freeze_config({**DEFAULT_CONFIG, "run": {**DEFAULT_CONFIG["run"], "channel": "hybrid", "strict": True}})
+    eng = AcisEngine.from_config(cfg, encoder=HashingEncoder())
+    snap = eng.build_snapshot([Snippet(handle=i, text=t) for i, t in tiny_corpus], source="x")
+    with pytest.raises(StrictViolation):
+        eng.search_batch(snap, ["q"], ["gcd"], top_k=3, strict=True)
 
 
 def test_lexical_only_engine_records_a_degradation(tiny_corpus):

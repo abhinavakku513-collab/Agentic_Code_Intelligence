@@ -7,6 +7,8 @@ decides whether a candidate is used the way its authors intended. All are pure e
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -156,13 +158,22 @@ def test_the_seed_card_loads_and_describes_itself():
     card = registry.load_card("qwen3-embedding-0.6b")
     assert card.name == "Qwen/Qwen3-Embedding-0.6B"
     assert card.pooling == "last_token" and card.padding_side == "left" and card.normalize
-    assert not card.is_pinned  # G0.4 pins it; until then it must not claim to be shippable
+    assert card.is_pinned  # G0.4 pinned it: `acis fetch --models … --pin` wrote the commit and the file hashes
     assert registry.licence_is_permissive(card)
     assert registry.describe(card)["card_fingerprint"]
 
 
+def test_every_shipped_card_is_pinned_permissive_and_free_of_remote_code():
+    """D4, checked against what is actually on disk rather than against one example."""
+    for key in registry.available_cards():
+        card = registry.load_card(key)
+        registry.assert_shippable(card)
+        assert card.file_sha256, f"{key} pins no file checksums"
+
+
 def test_an_unpinned_card_may_not_ship():
-    card = registry.load_card("qwen3-embedding-0.6b")
+    """The rule, tested on a card constructed unpinned — the shipped ones are all pinned now."""
+    card = replace(registry.load_card("qwen3-embedding-0.6b"), base_commit=None)
     with pytest.raises(InvalidInput, match="not pinned"):
         registry.assert_shippable(card)
 
@@ -242,5 +253,13 @@ def test_pinned_files_are_verified_against_disk(tmp_path):
 
 
 def test_a_card_pinning_nothing_says_so():
-    card = registry.load_card("qwen3-embedding-0.6b")
+    card = replace(registry.load_card("qwen3-embedding-0.6b"), file_sha256={})
     assert registry.verify_pinned_files(card, ".") == ["the card pins no file checksums (G0.4 records them)"]
+
+
+def test_a_pinned_card_catches_weights_that_do_not_match(tmp_path):
+    """The point of the pins: a file that is not what was pinned must not be encoded with."""
+    card = registry.load_card("qwen3-embedding-0.6b")
+    (tmp_path / "model.safetensors").write_bytes(b"not the pinned weights")
+    problems = registry.verify_pinned_files(card, tmp_path)
+    assert problems and any("model.safetensors" in p for p in problems)

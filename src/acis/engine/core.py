@@ -22,7 +22,9 @@ from __future__ import annotations
 import heapq
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -73,10 +75,32 @@ class SnapshotData:
     lexical: Bm25Index | None = None
     vectors: np.ndarray | None = None
     missing: tuple[str, ...] = ()
+    #: Parse-only document features, built once per snapshot on first use (Phase 4). Keyed by body hash, so
+    #: duplicate documents — and the same body in another version — are parsed once.
+    _features: dict[str, Any] = field(default_factory=dict, repr=False)
+    _dup_counts: dict[str, int] = field(default_factory=dict, repr=False)
 
     @property
     def size(self) -> int:
         return len(self.doc_ids)
+
+    def features_of(self, doc_id: str) -> Any:
+        """Document features, parsed on demand and cached for the life of the snapshot (immutable content)."""
+        from acis.features.doc import extract  # noqa: PLC0415
+
+        body_hash = self.hash_of[doc_id]
+        cached = self._features.get(body_hash)
+        if cached is None:
+            cached = extract(self.store[body_hash])
+            self._features[body_hash] = cached
+        return cached
+
+    def duplicate_count(self, doc_id: str) -> int:
+        """How many documents in this snapshot share this exact body — a corpus fact, never a query one."""
+        if not self._dup_counts:
+            for h in self.body_hashes:
+                self._dup_counts[h] = self._dup_counts.get(h, 0) + 1
+        return self._dup_counts.get(self.hash_of[doc_id], 1)
 
     def text_of(self, doc_id: str) -> str:
         """Evidence is always re-read from the store by hash — never carried along from the ranking (INV-1)."""
@@ -122,6 +146,9 @@ class AcisEngine(VersionedEngineMixin):
         self._loaded: dict[tuple[str, str], SnapshotData] = {}
         self._reports: dict[str, list[BuildReport]] = {}
         self._query_vector_cache: dict[str, np.ndarray] = {}
+        #: The learned ranker, when one has been trained and the config points at it (Phase 4, gate G5).
+        self._ranker: Any = None
+        self._ranker_loaded = False
 
     # -- construction ------------------------------------------------------------------------------------------
     @classmethod
@@ -137,6 +164,21 @@ class AcisEngine(VersionedEngineMixin):
     @property
     def config_hash(self) -> str:
         return self.config.config_hash
+
+    @property
+    def ranker(self) -> Any:
+        """The trained ranker named by `rank.model`, loaded once. `None` means fusion, never a silent identity."""
+        if self._ranker_loaded:
+            return self._ranker
+        self._ranker_loaded = True
+        path = str(self.config.get("rank.model", "") or "")
+        if path:
+            from acis.core.paths import acis_root  # noqa: PLC0415
+            from acis.rank.ltr import Ranker  # noqa: PLC0415
+
+            target = Path(path)
+            self._ranker = Ranker.load(target if target.is_absolute() else acis_root() / target)
+        return self._ranker
 
     @property
     def model_fingerprint(self) -> str:
@@ -336,6 +378,94 @@ class AcisEngine(VersionedEngineMixin):
             key=lambda item: (-item[1], data.hash_of.get(item[0], item[0]), data.ordinal.get(item[0], 1 << 30)),
         )
 
+    def _hybrid_ranking(
+        self,
+        data: SnapshotData,
+        query: str,
+        *,
+        route: str,
+        want: int,
+        counters: Counters,
+        strict: bool,
+    ) -> list[tuple[str, float]]:
+        """Dense ∪ lexical → features → ranker → dense tail (spec 02 §4 stages 3–9).
+
+        The fallback chain is explicit and counted (INV-7): a trained ranker if one is loaded and its evidence
+        fired, reciprocal-rank fusion otherwise, and the dense order if the lexical channel is missing entirely.
+        Every step down increments a counter and appears in `degradations`, and strict mode refuses all of them.
+        """
+        from acis.features.query import bridge as bridge_features  # noqa: PLC0415
+        from acis.features.query import extract as query_features  # noqa: PLC0415
+        from acis.rank import candidates as cand  # noqa: PLC0415
+
+        dense_order = self._dense_ranking(data, query, route=route, k=None)
+        retrieve = self.config.section("retrieve")
+        lexical_k = int(retrieve.get("lexical_k", 30))
+        union_cap = int(retrieve.get("union_cap", 100))
+        dense_k = int(retrieve.get("dense_k", 100))
+
+        lexical_order: list[tuple[str, float]] = []
+        if data.lexical is not None and "lexical" not in data.missing:
+            lexical_order = self._lexical_ranking(data, query, lexical_k)
+        else:
+            degradation("lexical_unavailable", "dense-only fusion", strict=strict, counters=counters)
+
+        pool = cand.union(dense_order, lexical_order, dense_k=dense_k, lexical_k=lexical_k, cap=union_cap)
+        if not pool:
+            return dense_order[:want]
+
+        qf = query_features(query)
+        bridge = {c.doc_id: bridge_features(qf, data.features_of(c.doc_id)) for c in pool}
+        doc_meta = {
+            c.doc_id: {
+                "n_tokens": data.features_of(c.doc_id).n_tokens,
+                "parse_ok": data.features_of(c.doc_id).parse_ok,
+                "dup_cluster_size": data.duplicate_count(c.doc_id),
+            }
+            for c in pool
+        }
+        matrix = cand.feature_matrix(pool, bridge=bridge, query_tokens=qf.n_tokens, doc_meta=doc_meta)
+        doc_ids = [c.doc_id for c in pool]
+
+        ranker = self.ranker
+        head: list[str]
+        if ranker is not None:
+            head, abstained = ranker.rerank(doc_ids, matrix)
+            if abstained:
+                degradation("ltr_abstained", "not enough feature groups fired", strict=False, counters=counters)
+                head = self._rrf_order(pool)
+        else:
+            degradation("ltr_unavailable", "reciprocal-rank fusion", strict=strict, counters=counters)
+            head = self._rrf_order(pool)
+
+        # The head is re-scored by position, then the dense tail follows it to `want` (spec 02 §4 stage 9). The
+        # tail's own order is the dense one, which is why it is taken from `dense_order` rather than recomputed.
+        seen = set(head)
+        tail = [doc for doc, _ in dense_order if doc not in seen]
+        ordered = head + tail
+        floor = -float(len(ordered))
+        return [(doc, floor + float(len(ordered) - i)) for i, doc in enumerate(ordered[:want])]
+
+    @staticmethod
+    def _rrf_order(pool: Sequence[Any]) -> list[str]:
+        """Reciprocal-rank fusion over the union — parameter-free, and the honest default until G2 tunes weights.
+
+        Ties are broken by dense rank, so fusion can never reorder two documents it has no reason to separate.
+        """
+        from acis.rank.candidates import reciprocal_rank  # noqa: PLC0415
+
+        return [
+            c.doc_id
+            for c in sorted(
+                pool,
+                key=lambda c: (
+                    -(reciprocal_rank(c.dense_rank) + reciprocal_rank(c.lexical_rank)),
+                    c.dense_rank or 1 << 30,
+                    c.doc_id,
+                ),
+            )
+        ]
+
     def _lexical_ranking(self, data: SnapshotData, query: str, k: int) -> list[tuple[str, float]]:
         if data.lexical is None:
             raise NotReady("the lexical channel is not available for this snapshot")
@@ -402,7 +532,8 @@ class AcisEngine(VersionedEngineMixin):
         elif mode == "lexical":
             ranking = self._lexical_ranking(data, query, data.size)
         elif mode == "hybrid":
-            raise NotReady("channel fusion is decided by gate G2 in Phase 4; it does not exist yet")
+            ranking = self._hybrid_ranking(data, query, route=route, want=want, counters=sink, strict=strict)
+            ordered = True
         else:
             degradation("dense_unavailable", "lexical-only ranking", strict=strict, counters=sink)
             ranking = self._lexical_ranking(data, query, data.size)
