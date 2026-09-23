@@ -99,15 +99,14 @@ class _EncoderSurface(AbsEncoder):
         return self._engine
 
     def _build_encoder(self) -> Any:
-        """Phase 1 wires the harness stand-in; Phase 2 replaces this with the real encoder runtime."""
-        from acis.embed.hashing import HashingEncoder  # noqa: PLC0415
+        """Whatever the configuration names, built by the one factory Mode A and the bake-off also use.
 
-        name = str(self.cfg.get("model.encoder", "hashing"))
-        if name != "hashing":
-            raise StrictViolation(
-                f"encoder {name!r} is not available yet: the dense runtime is built in Phase 2 (docs/spec/07)"
-            )
-        encoder = HashingEncoder(dim=int(self.cfg.get("model.dim", 4096)))
+        Sharing the constructor is the point: if Mode B built its own encoder, the A-vs-B comparison (G-AB) could
+        compare two different models while reporting one name.
+        """
+        from acis.embed.factory import build_encoder  # noqa: PLC0415
+
+        encoder = build_encoder(self.cfg)
         if self.cfg.strict and not encoder.submission_capable and not self.harness_dry_run:
             raise StrictViolation(
                 "the hashing stand-in encoder may not serve a strict run; it exists to validate the harness only"
@@ -150,9 +149,22 @@ class _EncoderSurface(AbsEncoder):
         prepared = [self._prepare_query(t) if is_query else self._prepare_document(t) for t in texts]
         encoder = self.engine.encoder
         assert encoder is not None
-        return np.asarray(
-            encoder.encode(prepared, is_query=is_query, batch_size=int(kw.get("batch_size", 64))), dtype=np.float32
-        )
+        batch_size = int(kw.get("batch_size", 64))
+        if not is_query:
+            return np.asarray(encoder.encode(prepared, is_query=False, batch_size=batch_size), dtype=np.float32)
+
+        # Queries are encoded per route, because the route chooses the instruction (INV-15). Grouping keeps the
+        # work batched; rows are written back to their input positions, so batching stays unobservable (INV-3).
+        # The route is taken from the *normalised* query, exactly as Mode A takes it (`AcisEngine.search`).
+        out = np.zeros((len(prepared), encoder.dim), dtype=np.float32)
+        groups: dict[str, list[int]] = {}
+        for i, raw in enumerate(texts):
+            normalised, _ = self.engine.normalise_query(raw)
+            groups.setdefault(self.engine.route(normalised), []).append(i)
+        for route, rows in groups.items():
+            vectors = encoder.encode([prepared[i] for i in rows], is_query=True, batch_size=batch_size, route=route)
+            out[rows] = np.asarray(vectors, dtype=np.float32)
+        return out
 
     def _prepare_query(self, text: str) -> str:
         """Exactly the preparation Mode A applies, including the engine's own input rules.

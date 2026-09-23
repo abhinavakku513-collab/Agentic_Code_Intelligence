@@ -59,8 +59,15 @@ class HashingEncoder:
     def submission_capable(self) -> bool:
         return False
 
-    def encode(self, texts: Sequence[str], *, is_query: bool = False, batch_size: int = 64) -> np.ndarray:
-        """Batch size changes nothing here — which is exactly what the batch-invariance test needs (INV-3)."""
+    def encode(
+        self, texts: Sequence[str], *, is_query: bool = False, batch_size: int = 64, route: str = "generic"
+    ) -> np.ndarray:
+        """Batch size changes nothing here — which is exactly what the batch-invariance test needs (INV-3).
+
+        The route changes nothing either: a bag of hashed tokens has no instruction to vary. It is accepted so the
+        stand-in satisfies the same contract as a real encoder, and ignored honestly rather than faked.
+        """
+        _ = route
         prefix = self.query_prefix if is_query else self.doc_prefix
         matrix = np.zeros((len(texts), self.dim), dtype=np.float32)
         for row, text in enumerate(texts):

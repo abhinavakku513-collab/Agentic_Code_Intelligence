@@ -250,7 +250,7 @@ class AcisEngine:
         _ = weak_marker_count(query)  # a routing signal, recorded for Phase 4; never a filter on its own
         return "generic"
 
-    def _query_vector(self, snapshot_id: str, query: str) -> np.ndarray:
+    def _query_vector(self, snapshot_id: str, query: str, *, route: str = "generic") -> np.ndarray:
         assert self.encoder is not None
         prep = self.config.section("prep").get("query", {})
         view = build_view(query, str(prep.get("view", "V0")))
@@ -267,6 +267,9 @@ class AcisEngine:
                 "config": self.config_hash,
                 "model": self.model_fingerprint,
                 "profile": self.config.numeric_profile,
+                # The route chooses the instruction the query is encoded with (INV-15), so two routes are two
+                # different vectors of the same text. Leaving it out of the key would serve one for the other.
+                "route": route,
                 "text": prepared,
             }
         )
@@ -275,15 +278,17 @@ class AcisEngine:
             self.counters.incr("cache.qemb.hit")
             return cached
         self.counters.incr("cache.qemb.miss")
-        vector: np.ndarray = np.asarray(self.encoder.encode([prepared], is_query=True)[0], dtype=np.float32)
+        vector: np.ndarray = np.asarray(
+            self.encoder.encode([prepared], is_query=True, route=route)[0], dtype=np.float32
+        )
         self._query_vector_cache[key] = vector
         return vector
 
     # -- channels ------------------------------------------------------------------------------------------------
-    def _dense_ranking(self, data: SnapshotData, query: str) -> list[tuple[str, float]]:
+    def _dense_ranking(self, data: SnapshotData, query: str, *, route: str = "generic") -> list[tuple[str, float]]:
         if data.vectors is None or self.encoder is None:
             raise NotReady("the dense channel is not available for this snapshot")
-        vector = self._query_vector(data.snapshot.snapshot_id, query)
+        vector = self._query_vector(data.snapshot.snapshot_id, query, route=route)
         scores = exact_search(vector.reshape(1, -1), data.vectors)[0]
         return self._stable_order(data, [(doc_id, float(scores[i])) for i, doc_id in enumerate(data.doc_ids)])
 
@@ -339,15 +344,25 @@ class AcisEngine:
         return out
 
     def _rank_one(
-        self, data: SnapshotData, text: str, *, top_k: int, strict: bool, counters: Counters | None = None
+        self,
+        data: SnapshotData,
+        text: str,
+        *,
+        top_k: int,
+        strict: bool,
+        counters: Counters | None = None,
+        route: str | None = None,
     ) -> list[tuple[str, float]]:
         query, _truncated = self.normalise_query(text)
+        # The route chooses the instruction the query is encoded with (spec 02 §4, stage 2). `search` has already
+        # computed it; the batch surface has not, and routing is a pure function of the query, so it is safe here.
+        route = route if route is not None else self.route(query)
         mode = str(self.config.get("run.channel", "auto"))
         dense_available, _ = self._channels()
         sink = counters if counters is not None else self.counters
 
         if mode in ("auto", "dense") and dense_available:
-            ranking = self._dense_ranking(data, query)
+            ranking = self._dense_ranking(data, query, route=route)
         elif mode == "dense":
             raise NotReady("dense channel requested but no encoder is configured")
         elif mode == "lexical":
@@ -408,7 +423,7 @@ class AcisEngine:
         # Per-request counters: `SearchResponse.degradations` must describe *this* request, not everything the
         # process has degraded since start-up. They are merged into the engine's totals for the run manifest.
         request_counters = Counters()
-        ranked = self._rank_one(data, req.query, top_k=top_k, strict=strict, counters=request_counters)
+        ranked = self._rank_one(data, req.query, top_k=top_k, strict=strict, counters=request_counters, route=route)
         for name, count in request_counters.snapshot().items():
             self.counters.incr(name, count)
         for event in request_counters.degradations():

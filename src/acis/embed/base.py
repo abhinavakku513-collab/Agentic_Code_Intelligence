@@ -36,7 +36,16 @@ class Encoder(Protocol):
         """False for harness stand-ins. Strict runs refuse them."""
         ...
 
-    def encode(self, texts: Sequence[str], *, is_query: bool = False, batch_size: int = 64) -> np.ndarray: ...
+    def encode(
+        self, texts: Sequence[str], *, is_query: bool = False, batch_size: int = 64, route: str = "generic"
+    ) -> np.ndarray:
+        """`route` selects the instruction a *query* is encoded with (INV-15); documents ignore it.
+
+        It is part of the contract rather than a detail of one implementation because a route that stops before
+        the encoder is invisible: every vector still looks reasonable and every query quietly gets the generic
+        instruction.
+        """
+        ...
 
 
 def l2_normalize(matrix: np.ndarray) -> np.ndarray:
