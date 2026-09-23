@@ -266,6 +266,44 @@ def test_a_cache_verification_books_no_touch(tmp_path, official_config, isolated
     assert (result.run_dir / RESULT_JSON).is_file()
 
 
+@pytest.mark.slow
+def test_a_reproduction_is_not_refused_by_our_budget_or_our_git_state(tmp_path, official_config, monkeypatch):
+    """`make reproduce` is the judge quick start; it must not inherit our release-candidate preconditions.
+
+    With the touch budget exhausted and the working tree dirty — both true on our machine after five ledgered
+    runs — a ledgered run is correctly refused. The judge path must still work, because neither fact is theirs.
+    """
+    from acis.eval import official
+
+    monkeypatch.setattr(ledger, "ledger_path", lambda: tmp_path / "exhausted.jsonl")
+    for _ in range(ledger.TEST_TOUCH_BUDGET):
+        ledger.append({"kind": "rc", "test_touch_count": 1})
+    monkeypatch.setattr(official, "_working_tree_is_dirty", lambda: True)
+
+    with pytest.raises(Exception, match="budget|uncommitted"):
+        run(tmp_path / "ledgered", official_config, "B", ledgered=True)
+
+    result = run(tmp_path / "judge", official_config, "B", ledgered=False)
+    assert result.run_id == ""
+    assert (result.run_dir / RESULT_JSON).is_file()
+    assert ledger.test_touches_used() == ledger.TEST_TOUCH_BUDGET  # unchanged by the reproduction
+
+
+def test_run_official_routes_the_three_paths_correctly(monkeypatch, tmp_path):
+    """`reproduce` and `cache_verify` must reach `run_pipeline` as non-ledgered; an RC must not."""
+    from acis.eval import official
+
+    seen: list[dict] = []
+    monkeypatch.setattr(official, "run_pipeline", lambda **kw: seen.append(kw) or object())
+
+    official.run_official(rc="RC0", mode="B", config_path="x.yaml", out=str(tmp_path / "a"))
+    official.run_official(rc="RC0", mode="B", config_path="x.yaml", out=str(tmp_path / "b"), reproduce=True)
+    official.run_official(rc="RC0", mode="B", config_path="x.yaml", out=str(tmp_path / "c"), cache_verify=True)
+
+    assert [kw["ledgered"] for kw in seen] == [True, False, False]
+    assert seen[0]["cold"] is True and seen[2]["cold"] is False
+
+
 # -- preconditions, without running anything ----------------------------------------------------------------
 def test_primary_mode_selection_rules():
     from acis.core.config import freeze_config
