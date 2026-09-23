@@ -6,6 +6,7 @@ Privacy rule: an event may carry hashes, lengths and timings. Raw query text or 
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import sys
@@ -31,6 +32,26 @@ def _redact(_logger: Any, _name: str, event_dict: dict[str, Any]) -> dict[str, A
     return event_dict
 
 
+class _CurrentStderr:
+    """A stand-in for `sys.stderr` that resolves it at write time, and never raises at the caller.
+
+    structlog binds the stream object when logging is configured. If that object is later replaced or closed —
+    which pytest's capture does routinely, and a daemonised run can do too — every subsequent log call raises
+    `ValueError: I/O operation on closed file` **inside whatever was being logged**. Observability must not be
+    able to break the thing it observes, so the stream is looked up per write and a failed write is dropped.
+    """
+
+    def write(self, data: str) -> int:
+        try:
+            return sys.stderr.write(data)
+        except (ValueError, OSError):
+            return 0
+
+    def flush(self) -> None:
+        with contextlib.suppress(ValueError, OSError):
+            sys.stderr.flush()
+
+
 def configure(level: str | int | None = None, *, json_lines: bool = True) -> None:
     """Idempotent logging setup. Safe to call from the CLI, the API and tests."""
     global _CONFIGURED  # noqa: PLW0603 — module-level idempotence flag
@@ -48,7 +69,7 @@ def configure(level: str | int | None = None, *, json_lines: bool = True) -> Non
             renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(numeric),
-        logger_factory=structlog.PrintLoggerFactory(sys.stderr),
+        logger_factory=structlog.PrintLoggerFactory(_CurrentStderr()),
         cache_logger_on_first_use=True,
     )
     _CONFIGURED = True

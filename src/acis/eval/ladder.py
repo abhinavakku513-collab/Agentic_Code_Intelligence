@@ -214,12 +214,23 @@ def record(
 ) -> str:
     """Append a ladder result to the ledger and return its `run_id` (INV-14: numbers exist only here)."""
     decision_set = decision_set_of(result.n_queries, fold=fold)
-    if kind == "gate" and decision_set not in GATE_ELIGIBLE_SETS:
-        raise InvalidInput(
-            "a gate decision may only be recorded on the full decision set (docs/spec/09 §2)",
-            decision_set=decision_set,
-            n_queries=result.n_queries,
-        )
+    if kind == "gate":
+        if decision_set not in GATE_ELIGIBLE_SETS:
+            raise InvalidInput(
+                "a gate decision may only be recorded on the full decision set (docs/spec/09 §2)",
+                decision_set=decision_set,
+                n_queries=result.n_queries,
+            )
+        # A gate row is quoted as evidence for a decision, so it has to be reproducible from a commit. Dev rows
+        # may come from a dirty tree — that is how exploration works — but the moment a number decides something,
+        # `git_sha` has to rebuild it (docs/spec/03 §6).
+        from acis.eval.official import _working_tree_is_dirty  # noqa: PLC0415 — avoids an import cycle
+
+        if _working_tree_is_dirty():
+            raise InvalidInput(
+                "a gate decision may not be recorded from a dirty working tree: its git_sha must rebuild the "
+                "number it quotes. Commit first, or set ACIS_ALLOW_DIRTY_RC=1 to override deliberately."
+            )
     row = (
         ledger.LedgerRowBuilder(kind=kind)
         .with_metrics(result.metrics)

@@ -146,3 +146,27 @@ def test_warming_materialises_every_config_the_loader_asks_for(moved_seal, monke
     monkeypatch.setitem(__import__("sys").modules, "datasets", FakeDatasets)
     fetch.warm_sealed_datasets_cache()
     assert requested == ["corpus", "queries", "qrels"]
+
+
+# -- the cache we build ourselves must be one the detector can see -------------------------------------------------
+def test_detection_sees_a_datasets_cache_layout():
+    """`warm_sealed_datasets_cache` deliberately creates this layout; a detector blind to it is blind to us."""
+    from acis.appsdata.sources import SEALED_SPLIT, is_sealed_file
+
+    for name in (
+        f"coir-retrieval___apps/default/0.0.0/abc123/apps-{SEALED_SPLIT}.arrow",
+        f"apps-{SEALED_SPLIT}.arrow",
+        f"datasets/coir-retrieval___apps/qrels/0.0.0/deadbeef/apps-{SEALED_SPLIT}-00000-of-00001.arrow",
+    ):
+        assert is_sealed_file(name), name
+
+
+def test_detection_still_ignores_ordinary_arrow_files():
+    from acis.appsdata.sources import DEV_SPLIT, is_sealed_file
+
+    for name in (
+        f"coir-retrieval___apps/corpus/0.0.0/abc123/apps-{DEV_SPLIT}.arrow",
+        "runs/cache/embeddings.arrow",
+        "coir-retrieval___apps/corpus/0.0.0/abc123/apps-corpus.arrow",
+    ):
+        assert not is_sealed_file(name), name

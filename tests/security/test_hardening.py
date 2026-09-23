@@ -208,3 +208,25 @@ def test_the_robustness_fixture_meets_its_declared_minimum():
     from acis import robust_hook
 
     assert robust_hook.corpus_size() >= robust_hook.MIN_DOCS
+
+
+def test_logging_cannot_break_the_operation_it_observes():
+    """A closed or replaced stderr must not raise inside the code being logged (O-1's quieter sibling).
+
+    structlog binds the stream when logging is configured; pytest's capture replaces and closes it routinely, and
+    a daemonised run can too. A log call is an observation, never a failure mode.
+    """
+    import io
+    import sys
+
+    from acis.obs.log import configure, get_logger
+
+    configure(level="INFO")
+    closed = io.StringIO()
+    closed.close()
+    original = sys.stderr
+    sys.stderr = closed
+    try:
+        get_logger("acis.test").info("into_the_void", snapshot_id="s_1")  # must not raise
+    finally:
+        sys.stderr = original

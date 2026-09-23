@@ -47,6 +47,11 @@ SEALED_BASENAMES: tuple[str, ...] = (
     f"*qrels*{SEALED_SPLIT}*.jsonl",
     f"*{SEALED_SPLIT}*qrels*.jsonl",
     f"{SEALED_SPLIT}-labels*.parquet",
+    # A HuggingFace *datasets* cache stores `…/<config>/0.0.0/<hash>/<dataset>-<split>.arrow`: no "qrels" in the
+    # name and a hash for a parent. Since `warm_sealed_datasets_cache` deliberately creates that layout in the
+    # sealed area, a detector blind to it would be blind to the one cache we build ourselves.
+    f"*-{SEALED_SPLIT}.arrow",
+    f"*-{SEALED_SPLIT}-*.arrow",
 )
 #: Directory names whose split-named shards are labels rather than documents.
 SEALED_PARENTS: frozenset[str] = frozenset({"data", "qrels"})

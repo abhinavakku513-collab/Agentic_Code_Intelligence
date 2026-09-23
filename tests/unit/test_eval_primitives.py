@@ -266,3 +266,32 @@ def test_shingles_and_jaccard_are_formatting_insensitive():
 def test_exact_duplicate_groups_finds_only_real_groups():
     groups = decontam.exact_duplicate_groups({"a": "x y", "b": "x  y", "c": "z"})
     assert list(groups.values()) == [["a", "b"]]
+
+
+# -- a gate row is evidence, so it must be reproducible from a commit ----------------------------------------------
+def test_a_gate_row_is_refused_from_a_dirty_tree(isolated_ledger, monkeypatch):
+    """Dev rows may come from a dirty tree; the moment a number decides something, its git_sha must rebuild it."""
+    from acis.eval import ladder, official
+
+    monkeypatch.delenv("ACIS_ALLOW_DIRTY_RC", raising=False)
+    monkeypatch.setattr(official, "_working_tree_is_dirty", lambda: True)
+    result = ladder.LadderResult(
+        rung="bm25_acis", run={}, metrics={"ndcg_at_10": 0.5}, seconds=1.0, n_queries=5000, n_docs=8765
+    )
+
+    with pytest.raises(InvalidInput, match="dirty working tree"):
+        ladder.record(result, kind="gate")
+
+    monkeypatch.setattr(official, "_working_tree_is_dirty", lambda: False)
+    assert ladder.record(result, kind="gate").startswith("gate-")
+
+
+def test_a_dev_row_is_allowed_from_a_dirty_tree(isolated_ledger, monkeypatch):
+    """Exploration happens on a dirty tree by definition; only decisions are held to the stricter rule."""
+    from acis.eval import ladder, official
+
+    monkeypatch.setattr(official, "_working_tree_is_dirty", lambda: True)
+    result = ladder.LadderResult(
+        rung="bm25_acis", run={}, metrics={"ndcg_at_10": 0.5}, seconds=1.0, n_queries=200, n_docs=8765
+    )
+    assert ladder.record(result, kind="dev").startswith("dev-")
