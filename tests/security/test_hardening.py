@@ -237,3 +237,40 @@ def test_logging_cannot_break_the_operation_it_observes():
         get_logger("acis.test").info("into_the_void", snapshot_id="s_1")  # must not raise
     finally:
         sys.stderr = original
+
+
+# -- pathological input must not become a denial of service ----------------------------------------------------
+@pytest.mark.parametrize(
+    ("name", "call"),
+    [
+        (
+            "fold_numeric_literals",
+            lambda text: __import__("acis.prep.normalize", fromlist=["x"]).fold_numeric_literals(text),
+        ),
+        ("lexical_view", lambda text: __import__("acis.prep.normalize", fromlist=["x"]).lexical_view(text)),
+        ("code_tokens", lambda text: __import__("acis.lexical.codetok", fromlist=["x"]).code_tokens(text)),
+    ],
+)
+def test_a_long_run_of_digits_does_not_blow_up_the_query_path(name, call):
+    """Found in the corpus, not in theory: one APPS document is 289,000 characters of mostly digits.
+
+    The readable form of the numeric-folding patterns is quadratic on exactly that input — 34 seconds at 40,000
+    characters — and these functions run on **every query**, so it is a denial of service rather than a slow
+    test. The bound asserted here is generous on purpose; the failure it catches is three orders of magnitude out.
+    """
+    import time
+
+    hostile = "1234567890" * 4000  # 40,000 digits, no operator anywhere for the pattern to anchor on
+    started = time.perf_counter()
+    call(hostile)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 2.0, f"{name} took {elapsed:.1f}s on 40,000 digits"
+
+
+def test_folding_still_folds_after_being_bounded():
+    """The fix must not have cost the behaviour it protects: one constant, written five ways, still matches."""
+    from acis.prep.normalize import fold_numeric_literals
+
+    for spelling in ("10^9+7", "10^{9}+7", "1e9+7", "10 ^ 9 + 7"):
+        assert fold_numeric_literals(spelling) == "1000000007", spelling
+    assert fold_numeric_literals("10^99") == "10^99"  # an absurd exponent is left alone, not materialised

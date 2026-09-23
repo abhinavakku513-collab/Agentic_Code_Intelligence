@@ -104,7 +104,7 @@ KEEP = frozenset(
 
 #: Python writes the exponent the prose does not: `10**9 + 7` against `10^9+7`. Rewriting `**` to `^` lets the
 #: *same* generic fold serve both sides, instead of a second implementation that could drift from the first.
-_PY_POWER = re.compile(r"(\d+)\s*\*\*\s*(\d+)")
+_PY_POWER = re.compile(r"(\d{1,18}+)\s*+\*\*\s*+(\d{1,18}+)")  # bounded: see `prep.normalize`
 _TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\d+")
 _CAMEL = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+")
 _STRING = re.compile(r"""(['"])(?:\\.|(?!\1).)*\1""", re.DOTALL)
