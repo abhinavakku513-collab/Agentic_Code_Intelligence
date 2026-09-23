@@ -30,6 +30,9 @@ from acis.core.errors import IndexRequired, InvalidInput, NotFound
 from acis.core.types import (
     BuildMode,
     BuildReport,
+    EvolveRequest,
+    EvolveResponse,
+    Hit,
     JobHandle,
     Limits,
     RefSpec,
@@ -154,6 +157,108 @@ class VersionedEngineMixin:
         """Startup recovery for one repository (spec 04 §3). Safe to call at any time."""
         self._forget(repo_id)
         return snapshots.recover(repo_id)
+
+    # -- the Bonus: evolution-aware retrieval (Track B2) -------------------------------------------------------
+    def lineage_index(self, repo_id: str) -> Any:
+        """Align every consecutive pair of versions and close the links into lineages. Cached per repository.
+
+        Built from what the store already holds — bodies from the CAS, vectors from each snapshot's matrix — so
+        recognising revisions costs no embedding at all (spec 04 §6).
+        """
+        from acis.core.hashing import sha256_text  # noqa: PLC0415
+        from acis.lineage.align import Revision, align  # noqa: PLC0415
+        from acis.lineage.store import LineageIndex, build_lineages  # noqa: PLC0415
+
+        cached = self._lineages.get(repo_id)  # type: ignore[attr-defined]
+        rows = [r for r in self.versions(repo_id) if r["snapshot_id"]]
+        fingerprint = tuple((str(r["label"]), str(r["snapshot_id"])) for r in rows)
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
+        if not rows:
+            raise IndexRequired(f"{repo_id} has no built version to align")
+
+        revisions: dict[str, list[Revision]] = {}
+        tree: list[tuple[str, dict[str, str]]] = []
+        for row in rows:
+            label, snapshot_id = str(row["label"]), str(row["snapshot_id"])
+            data = self.open_version(repo_id, f"snapshot:{snapshot_id}")
+            units = []
+            for index, key in enumerate(data.doc_ids):
+                text = data.text_of(key)
+                units.append(
+                    Revision(
+                        key=key,
+                        body_hash=sha256_text(text),
+                        text=text,
+                        unit_id=data.unit_of(key).unit_id,
+                        vector=(data.vectors[index] if data.vectors is not None else None),
+                    )
+                )
+            revisions[label] = units
+            tree.append((label, {u.key: u.body_hash for u in units}))
+
+        links = {}
+        labels = [label for label, _ in tree]
+        for index, label in enumerate(labels[1:], start=1):
+            links[label] = align(revisions[labels[index - 1]], revisions[label])
+
+        index_obj = LineageIndex.build(build_lineages(tree, links))
+        self._lineages[repo_id] = (fingerprint, index_obj)  # type: ignore[attr-defined]
+        return index_obj
+
+    def retrieve_evolution(self, req: EvolveRequest) -> EvolveResponse:
+        """Search every version at once and answer with lineages rather than revisions (D12, spec 04 §6).
+
+        Each version is searched through the ordinary pipeline — same channels, same ranking — and the results
+        are grouped afterwards. Grouping never invents a result: it can only merge revisions the cascade linked
+        above its confidence floor, so two implementations that were never linked stay two answers.
+        """
+        from acis.lineage.search import RevisionHit, duplicate_rate, group  # noqa: PLC0415
+
+        if not req.repo_id or req.repo_id == "-":
+            raise InvalidInput("evolution-aware retrieval needs a repository id")
+        resolution = selectors.resolve(req.repo_id, "all")
+        index = self.lineage_index(req.repo_id)
+
+        per_version = max(req.top_k, 10)
+        hits: list[RevisionHit] = []
+        flat: list[Any] = []
+        for label, snapshot_id in zip(resolution.labels, resolution.snapshot_ids, strict=True):
+            data = self.open_version(req.repo_id, f"snapshot:{snapshot_id}")
+            ranked = self._rank_one(data, req.query, top_k=per_version, strict=False)  # type: ignore[attr-defined]
+            for rank, (doc_id, score) in enumerate(ranked, start=1):
+                hits.append(
+                    RevisionHit(
+                        version=label,
+                        key=doc_id,
+                        body_hash=data.hash_of[doc_id],
+                        score=float(score),
+                        rank=rank,
+                    )
+                )
+                flat.append((label, doc_id, float(score), rank, data))
+
+        grouped = group(hits, index, prefer=str(req.filters.get("prefer", "best")), top_k=req.top_k)
+        flat.sort(key=lambda item: (-item[2], item[3]))
+        flat_hits = [
+            Hit(
+                rank=position,
+                score=float(score),
+                unit=data.unit_of(doc_id),
+                source=data.text_of(doc_id),  # INV-1: evidence re-read by hash, per version
+                signals={"version_score": float(score)},
+            )
+            for position, (label, doc_id, score, _rank, data) in enumerate(flat[: req.top_k], start=1)
+        ]
+        return EvolveResponse(
+            groups=[g.as_dict() for g in grouped],
+            flat_results=tuple(flat_hits) if req.flat else (),
+            degradations=(
+                f"flat_duplicate_rate={duplicate_rate(hits, index):.3f}",
+                f"lineages={index.size}",
+                f"versions={len(resolution.labels)}",
+            ),
+        )
 
     # -- comparison --------------------------------------------------------------------------------------------------
     def compare_versions(self, repo_id: str, a: str, b: str, *, query: str | None = None) -> VersionComparison:

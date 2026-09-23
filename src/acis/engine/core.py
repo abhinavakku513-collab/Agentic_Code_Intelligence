@@ -38,8 +38,6 @@ from acis.core.types import (
     Diagnostics,
     EvalReport,
     EvalSpec,
-    EvolveRequest,
-    EvolveResponse,
     Hit,
     Route,
     SearchRequest,
@@ -149,6 +147,8 @@ class AcisEngine(VersionedEngineMixin):
         #: The learned ranker, when one has been trained and the config points at it (Phase 4, gate G5).
         self._ranker: Any = None
         self._ranker_loaded = False
+        #: Lineage index per repository, keyed by the versions it was built from (Track B2).
+        self._lineages: dict[str, tuple[Any, Any]] = {}
 
     # -- construction ------------------------------------------------------------------------------------------
     @classmethod
@@ -701,9 +701,6 @@ class AcisEngine(VersionedEngineMixin):
     # `VersionedEngineMixin` (Track B1, `acis.engine.versions`).
     def search_version(self, repo_id: str, version: str, query: str, **kw: object) -> SearchResponse:
         return self.search(SearchRequest(query=query, repo_id=repo_id, version=version, **kw))  # type: ignore[arg-type]
-
-    def retrieve_evolution(self, req: EvolveRequest) -> EvolveResponse:
-        raise NotReady("evolution-aware retrieval is built in Track B2 (docs/spec/04 §6)")
 
 
 __all__ = ["DEFAULT_CONFIG", "MAX_QUERY_CHARS", "MAX_TOP_K", "AcisEngine", "SnapshotData"]

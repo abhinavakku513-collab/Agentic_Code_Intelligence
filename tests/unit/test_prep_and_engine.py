@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from acis.core.config import freeze_config
-from acis.core.errors import InvalidInput, NotFound, NotReady, StrictViolation
+from acis.core.errors import InvalidInput, NotFound, StrictViolation
 from acis.core.types import SearchRequest, Snippet
 from acis.embed.hashing import HashingEncoder
 from acis.engine import AcisEngine, SearchEngine
@@ -287,17 +287,18 @@ def test_short_channel_results_are_padded_without_using_corpus_position(tiny_cor
     assert len(tail_scores) == 1 and max(tail_scores) < min(s for _, s in partial_f)
 
 
-def test_the_versioned_surface_exists_and_the_evolution_one_does_not_yet(engine):
-    """B1 landed, so `ingest`/`index` are real; B2 has not, so `retrieve_evolution` is still a frozen stub.
+def test_the_whole_frozen_surface_is_implemented(engine):
+    """Phase 1 froze this interface; B1 and B2 filled it in. Every method on it is now real.
 
-    The distinction is the point of the frozen interface: a method that is not built raises `NotReady` naming the
-    track that builds it, rather than being absent and silently changing the shape of the surface.
+    `retrieve_evolution` needs a repository, so calling it without one is `InvalidInput` — an argument error,
+    not "not built yet", which is the distinction the frozen interface exists to make visible.
     """
     eng, _ = engine
     from acis.core.types import EvolveRequest
 
-    assert callable(eng.ingest) and callable(eng.index) and callable(eng.update_version)
-    with pytest.raises(NotReady, match="Track B2"):
+    for name in ("ingest", "index", "update_version", "compare_versions", "activate", "rollback"):
+        assert callable(getattr(eng, name)), name
+    with pytest.raises(InvalidInput, match="repository"):
         eng.retrieve_evolution(EvolveRequest(query="x"))
 
 
