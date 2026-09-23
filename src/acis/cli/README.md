@@ -11,6 +11,7 @@ no command contains logic of its own.
 | L-4 | `acis doctor` writes `runs/hardware.json` and exits non-zero when the seal check fails | `tests/unit/test_cli.py` |
 | L-5 | `acis eval official` refuses to run unless `HF_HOME` points at the physical seal (D19) | `tests/security/test_seal.py` |
 | L-6 | Typed errors print as `code: message` and exit 1; they never raise a traceback at the user | `tests/unit/test_cli.py` |
+| L-8 | `acis fetch --models` downloads safetensors only — never a pickle checkpoint — resolves a moving revision to a commit, and refuses a non-permissive model unless it is asked for as reference (D4, CLAUDE.md §4) | `tests/unit/test_model_fetch.py` |
 | L-7 | `acis search` returns exactly `min(top_k, N)` ranked hits, prints evidence re-read from the content store (INV-1), and labels a stand-in encoder as one | `tests/integration/test_search_cli.py` |
 
 **Non-goals.** No evaluation endpoint is ever exposed over the network API (docs/spec/06 §1); `acis serve` is Track B3.

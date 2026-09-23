@@ -47,6 +47,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 def cmd_fetch(args: argparse.Namespace) -> int:
     from acis.appsdata import fetch
 
+    if args.models:
+        return _fetch_models(args)
     if args.verify:
         problems = fetch.verify_manifest()
         fetch.assert_seal()
@@ -60,6 +62,38 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     for a in assets:
         print(f"{a.sha256[:12]}  {a.repo_file}  ({a.n_bytes} bytes)")
     print(f"manifest: {fetch.manifest_path()}")
+    return 0
+
+
+def _fetch_models(args: argparse.Namespace) -> int:
+    """Fetch (or verify) carded model weights — the other half of G0.4.
+
+    Kept apart from the dataset path on purpose: a model is a different supply chain, with a different failure
+    mode (a pickle that executes on load) and a different licence question (D4).
+    """
+    from acis.embed import modelfetch
+
+    keys = [k.strip() for k in args.models.split(",") if k.strip()]
+    if not keys:
+        raise InvalidInput("--models takes one or more card keys, e.g. --models qwen3-embedding-0.6b")
+
+    if args.verify:
+        failed = False
+        for key in keys:
+            problems = modelfetch.verify_model(key)
+            failed = failed or bool(problems)
+            print(f"{key}: " + ("as pinned" if not problems else "\n  ".join(["PROBLEMS"] + problems)))
+        return 1 if failed else 0
+
+    for key in keys:
+        fetched = modelfetch.fetch_model(key, reference=args.reference, force=args.force)
+        label = "  (reference only: never shipped)" if fetched.reference_only else ""
+        print(f"{fetched.repo}  {fetched.commit[:12]}  {len(fetched.files)} files  {fetched.total_mb} MB{label}")
+        print(f"  -> {fetched.model_dir}")
+        if args.pin:
+            print(f"  pinned: {modelfetch.pin_card(fetched)}")
+        else:
+            print("  not pinned: re-run with --pin to write the commit and file hashes into the card (G0.4)")
     return 0
 
 

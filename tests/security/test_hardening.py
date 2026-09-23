@@ -129,14 +129,21 @@ def test_no_query_time_network_calls_in_the_engine():
         assert "requests." not in source and "urllib" not in source and "httpx" not in source
 
 
-def test_only_the_fetch_module_goes_online():
-    online = [
+#: The complete list of modules allowed to leave the offline default. Two supply chains, two fetchers, and
+#: nothing else: `appsdata/fetch.py` for the dataset (D19, the seal lives on the other side of it) and
+#: `embed/modelfetch.py` for model weights (D4/G0.4, safetensors only). Adding a third is a decision, and this
+#: assertion is where that decision has to be made rather than noticed later.
+ONLINE_MODULES = ["appsdata/fetch.py", "embed/modelfetch.py"]
+
+
+def test_only_the_declared_modules_go_online():
+    online = sorted(
         p.relative_to(SRC).as_posix()
         for p in SRC.rglob("*.py")
         if "HF_HUB_OFFLINE" in p.read_text(encoding="utf-8")
         and 'os.environ["HF_HUB_OFFLINE"] = "0"' in p.read_text(encoding="utf-8")
-    ]
-    assert online == ["appsdata/fetch.py"]
+    )
+    assert online == sorted(ONLINE_MODULES)
 
 
 # -- log redaction (O-1) --------------------------------------------------------------------------------------------

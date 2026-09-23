@@ -112,6 +112,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fetch.add_argument("--force", action="store_true")
     fetch.add_argument("--verify", action="store_true", help="re-hash the fetched assets and check the seal")
+    fetch.add_argument("--models", default="", help="card keys to fetch instead of dataset assets (G0.4)")
+    fetch.add_argument("--pin", action="store_true", help="write the commit and file hashes into the model card")
+    fetch.add_argument(
+        "--reference", action="store_true", help="allow a non-permissive model: measured for reference, never shipped"
+    )
 
     audit = sub.add_parser("audit", help="dataset audit (G0.2) -> runs/dataset_audit.json")
     audit.add_argument("--out", default="")
