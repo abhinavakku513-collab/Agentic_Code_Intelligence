@@ -19,6 +19,7 @@ Invariants implemented here:
 
 from __future__ import annotations
 
+import heapq
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -375,9 +376,17 @@ class AcisEngine:
         """
         seen = {d for d, _ in ranking}
         floor = min((s for _, s in ranking), default=0.0) - 1.0
-        unretrieved = [(doc_id, floor) for doc_id in data.doc_ids if doc_id not in seen]
-        padding = AcisEngine._stable_order(data, unretrieved)[: max(0, want - len(ranking))]
-        return [*ranking, *padding]
+        wanted = max(0, want - len(ranking))
+        if not wanted:
+            return list(ranking)
+        # All padding entries share one score, so the order among them is the content-hash tie-break alone —
+        # `nsmallest` on that key gives the same answer as sorting the whole corpus, without doing so per query.
+        chosen = heapq.nsmallest(
+            wanted,
+            (doc_id for doc_id in data.doc_ids if doc_id not in seen),
+            key=lambda doc_id: (data.hash_of.get(doc_id, doc_id), data.ordinal.get(doc_id, 1 << 30)),
+        )
+        return [*ranking, *((doc_id, floor) for doc_id in chosen)]
 
     # -- the single-query surface ---------------------------------------------------------------------------------
     def search(self, req: SearchRequest) -> SearchResponse:

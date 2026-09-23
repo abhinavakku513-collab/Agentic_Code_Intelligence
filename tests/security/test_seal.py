@@ -264,3 +264,55 @@ def test_the_harness_stand_in_encoder_is_refused_in_strict_mode(monkeypatch):
     object.__setattr__(model, "cfg", strict_cfg)
     with pytest.raises(StrictViolation, match="stand-in"):
         _ = model.engine
+
+
+# -- DEV-H is a counted confirmation, not a second decision set ------------------------------------------------
+def test_dev_h_requires_a_named_milestone(monkeypatch, tmp_path):
+    """Defaulting the milestone would let the first unlabelled run block every later one, while any invented
+    name granted a fresh touch. Neither is accounting."""
+    import argparse
+
+    from acis.cli.commands import _dev_h_milestone
+    from acis.core.errors import InvalidInput
+
+    monkeypatch.setenv("ACIS_HOME", str(tmp_path))
+    monkeypatch.delenv("ACIS_MILESTONE", raising=False)
+    args = argparse.Namespace(fold=4, milestone="", system="bm25_acis")
+    with pytest.raises(InvalidInput, match="naming the milestone"):
+        _dev_h_milestone(args, guard)
+
+
+def test_dev_h_refuses_a_second_use_inside_one_milestone(monkeypatch, tmp_path):
+    import argparse
+
+    from acis.cli.commands import _dev_h_milestone
+    from acis.core.errors import InvalidInput
+
+    monkeypatch.setenv("ACIS_HOME", str(tmp_path))
+    monkeypatch.delenv("ACIS_ALLOW_REPEAT_DEV_H", raising=False)
+    args = argparse.Namespace(fold=4, milestone="phase-2-gm", system="bm25_acis")
+    assert _dev_h_milestone(args, guard) == "phase-2-gm"
+    guard.record_dev_h_touch(reason="first use", milestone="phase-2-gm")
+    with pytest.raises(InvalidInput, match="already been used"):
+        _dev_h_milestone(args, guard)
+
+
+def test_a_dev_h_touch_is_chained_into_the_ledger(monkeypatch, tmp_path):
+    """A counter in a JSON file outside git can be erased with `rm`; a ledger row cannot, silently."""
+    import argparse
+
+    from acis.cli.commands import _record_dev_h_touch
+    from acis.eval import ledger
+
+    monkeypatch.setenv("ACIS_HOME", str(tmp_path))
+    monkeypatch.setattr(ledger, "ledger_path", lambda: tmp_path / "ledger.jsonl")
+    args = argparse.Namespace(fold=4, milestone="phase-2-gm", system="bm25_acis")
+    _record_dev_h_touch(args, guard, "phase-2-gm", run_id="dev-abc123")
+
+    rows = ledger.read_rows()
+    assert len(rows) == 1
+    assert rows[0].get("decision_set") == "dev_h"
+    assert rows[0].get("milestone") == "phase-2-gm"
+    assert rows[0].get("confirms_run") == "dev-abc123"
+    assert ledger.verify_chain() == []
+    assert guard.dev_h_touches_for("phase-2-gm") == 1

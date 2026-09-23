@@ -259,7 +259,12 @@ def _flatten_predictions(run: Mapping[str, Any]) -> dict[str, dict[str, float]]:
     """mteb nests predictions per split/subset in some versions and not in others; accept both shapes."""
     out: dict[str, dict[str, float]] = {}
     for key, value in run.items():
-        if not isinstance(value, Mapping) or not value:
+        if not isinstance(value, Mapping):
+            continue
+        if not value:
+            # A query mteb graded but ranked nothing for. Keeping it empty rather than dropping it is what makes
+            # `run.trec` cover the same queries the JSON was scored over (parity P3).
+            out[str(key)] = {}
             continue
         first = next(iter(value.values()))
         if isinstance(first, Mapping):  # {split: {qid: {doc: score}}}

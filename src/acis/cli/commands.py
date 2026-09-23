@@ -138,14 +138,21 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return handler(args)
 
 
-def _consume_dev_h_touch(args: argparse.Namespace, guard: Any) -> None:
-    """DEV-H (F4) is a once-per-milestone confirmation, not a decision set (docs/spec/03 §5).
+def _dev_h_milestone(args: argparse.Namespace, guard: Any) -> str:
+    """Check that DEV-H may be used, and return the milestone it is being spent on.
 
-    Without a counter, `acis eval dev --fold 4` could be run repeatedly during tuning and DEV-H would quietly
-    become the decision set, which is exactly the over-fitting the split was designed to prevent. Every use is
-    recorded and a second use inside the same milestone is refused.
+    DEV-H (F4) is a once-per-milestone confirmation, not a decision set (docs/spec/03 §5). Without a counter,
+    `acis eval dev --fold 4` could be repeated during tuning until DEV-H quietly became the decision set — which
+    is the over-fitting the split exists to prevent. The milestone must be named: defaulting it would let the
+    first unlabelled run block every later one while any invented name granted a fresh touch.
     """
-    milestone = str(getattr(args, "milestone", "") or os.environ.get("ACIS_MILESTONE", "") or "unlabelled")
+    milestone = str(getattr(args, "milestone", "") or os.environ.get("ACIS_MILESTONE", "")).strip()
+    if not milestone:
+        raise InvalidInput(
+            "using DEV-H requires naming the milestone it confirms (--milestone, or ACIS_MILESTONE)",
+            fold=args.fold,
+            hint="DEV-H is a once-per-milestone confirmation; decisions are made on all 5,000 dev queries",
+        )
     already = guard.dev_h_touches_for(milestone)
     if already and os.environ.get("ACIS_ALLOW_REPEAT_DEV_H") != "1":
         raise InvalidInput(
@@ -154,7 +161,31 @@ def _consume_dev_h_touch(args: argparse.Namespace, guard: Any) -> None:
             touches=already,
             hint="decide on all 5,000 dev queries (or K-fold OOF), or declare a new milestone",
         )
+    return milestone
+
+
+def _record_dev_h_touch(args: argparse.Namespace, guard: Any, milestone: str, run_id: str) -> None:
+    """Book the touch **after** the run succeeded, and chain it to the ledger.
+
+    Booking before would let a typo in `--system` burn the milestone's only confirmation, and a counter that lives
+    only in a JSON file outside git leaves no auditable trace — `rm` would erase it. The ledger row makes the use
+    as traceable as every other number.
+    """
+    from acis.eval import ledger  # noqa: PLC0415
+
     guard.record_dev_h_touch(reason=f"acis eval dev --system {args.system}", milestone=milestone)
+    ledger.append(
+        ledger.LedgerRowBuilder(kind="dev")
+        .with_fields(
+            rung=f"dev_h_touch:{args.system}",
+            dataset="dev",
+            decision_set="dev_h",
+            milestone=milestone,
+            confirms_run=run_id,
+            notes="DEV-H confirmation touch (docs/spec/03 §5); not a decision set",
+        )
+        .build()
+    )
 
 
 def _eval_dev(args: argparse.Namespace) -> int:
@@ -165,15 +196,18 @@ def _eval_dev(args: argparse.Namespace) -> int:
         raise InvalidInput("dataset assets are missing: run `make fetch` first")
 
     query_ids = None
+    milestone = ""
     if args.fold >= 0:
         if args.fold not in splits.fold_members():
             raise InvalidInput(f"fold {args.fold} does not exist", folds=splits.DEFAULT_FOLDS)
         query_ids = splits.fold_members()[args.fold]
         if args.fold == splits.DEV_H_FOLD:
-            _consume_dev_h_touch(args, guard)
+            milestone = _dev_h_milestone(args, guard)  # checked before the run, booked after it
 
     result = ladder.run_rung(args.system, query_ids=query_ids, limit=args.limit)
     run_id = ladder.record(result, fold=args.fold if args.fold >= 0 else None, extra={"fold": args.fold})
+    if milestone:
+        _record_dev_h_touch(args, guard, milestone, run_id)
     print(f"rung={result.rung} queries={result.n_queries} docs={result.n_docs} seconds={result.seconds:.1f}")
     print(f"ndcg@10={result.metrics['ndcg_at_10']:.4f}  mrr@10={result.metrics['mrr_at_10']:.4f}  ")
     print(f"recall@100={result.metrics['recall_at_100']:.4f}  ledger={run_id}")
