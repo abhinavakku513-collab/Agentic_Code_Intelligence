@@ -63,11 +63,34 @@ shows).
 | P6 | warm cache ≡ cold | exact; the cache is keyed on content, so repeated query texts hit on the cold pass too |
 | P7 | adversarial ties and sub-float32 gaps keep NDCG = MRR for a gold-at-rank-1 fixture | exact, at magnitudes 1, 10 and 100 |
 
-## What four independent audits found
+## What five independent audits found
 
-The phase was audited by a gatekeeper, an evaluation-integrity auditor, an mteb guardian and a code review. They
-agreed the harness itself was sound and found real defects in two places: code that had **never been executed**,
-and code that had never met a **realistic input**. All are fixed and each now has a regression test.
+The phase was audited by a gatekeeper, an evaluation-integrity auditor, an mteb guardian, and a code review — then
+a fifth review of the fixes themselves. They agreed the harness was sound and found real defects in two places:
+code that had **never been executed**, and code that had never met a **realistic input**. All are fixed and each
+now has a regression test.
+
+The fifth review is the one worth dwelling on, because it reviewed the *repairs*. Four of its findings would each
+have broken the single run that produces the submission, and none was reachable by the tests written alongside the
+repairs:
+
+* **the sealed cache could not be read offline at all.** mteb's retrieval loader never calls `hf_hub_download`; it
+  calls `datasets.get_dataset_config_names()`/`load_dataset()`, which under `HF_HUB_OFFLINE=1` raise *before*
+  consulting any cache and fall back only to the **datasets** cache. A sealed area holding hub blobs alone fails at
+  data loading, before a single vector is encoded. `fetch_sealed` now materialises the datasets cache for every
+  config the loader asks for, and `python -m acis.eval.final --smoke` lets the owner prove offline loading works
+  *before* RC day instead of discovering it during the run.
+* **verification demanded both mode JSONs**, so a single-mode run could never pass — and RC0 is a single Mode B
+  run (D8). The expectation now comes from the run's own manifest.
+* **`make reproduce` was a ledgered release candidate**, so the judge quick start enforced our touch budget and our
+  clean working tree, and appended to our ledger. It books nothing now.
+* **`make reproduce-cache` failed its own verification by construction**, writing a touch count into the manifest
+  with no ledger row behind it.
+
+Three of its findings were tests that passed for a different reason than their names claimed: the dry run gave each
+mode its own task name, which hid a predictions-file collision; a fragment test passed at one hit in ten; and the
+constant-engine meta-test asserted against itself. That is the failure mode to watch for in this repository — a
+test that cannot fail is worse than no test, because it is counted as evidence.
 
 **The official run would not have produced a valid submission.** The model was built without the config path, so a
 run validated against `configs/official.yaml` executed on `configs/dev.yaml`. `run.trec` was never written, so the
