@@ -18,5 +18,7 @@ verification, and the single sanctioned reader of the held-out labels.
 | E-8 | Dev tasks load the dev split only; any other split raises `SealedDataAccess` (INV-8) | `tests/security/test_seal.py` |
 | E-9 | `verify-submission` fails for one reason at a time and never counts a SKIP as a PASS | `tests/integration/test_verify_submission.py` |
 | E-10 | `acis.eval.final` is the only module that reads held-out labels, and refuses outside the official environment | `tests/security/test_seal.py` |
+| E-11 | G-M is a pure function of the measured table: smallest within tolerance wins, the tolerance widens only for a slow baseline, and a reference or non-permissive measurement can never change which model is selected (D4) | `tests/unit/test_bakeoff.py` |
+| E-12 | A decided gate config is written once; changing one raises rather than overwrites (supersede via `/adr`) | `tests/unit/test_bakeoff.py` |
 
 **Non-goals.** No ranking logic (that is `acis.engine`); no mteb types cross into the engine (INV-11).

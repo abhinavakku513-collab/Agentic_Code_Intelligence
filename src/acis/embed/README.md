@@ -17,8 +17,10 @@ a model-free stand-in encoder that exists to validate the harness.
 | M-7 | Cache writes are atomic and a corrupt entry is a miss, never an exception at the caller | `tests/unit/test_embed_phase2.py` |
 | M-8 | Instruction strings, pooling and truncation come from `configs/models/<name>.yaml`; only `statement_like` uses the APPS-tuned task string (INV-15) | `tests/unit/test_embed_phase2.py` |
 | M-9 | A model may ship only if pinned, permissively licensed and free of remote code (D4); others may be measured as reference | `tests/unit/test_embed_phase2.py` |
+| M-10 | Pooling honours the mask and the padding side; identical texts cost one forward pass within a call as well as across calls; the fingerprint moves with weights, card or numeric profile | `tests/unit/test_embed_runtime.py` |
+| M-11 | The scorecard measures cold before warm and reports an unknown projection as unknown, never as a passing one (D2, D17) | `tests/unit/test_bakeoff.py` |
 
-**Phase boundary.** The encoder *runtime itself* (loading weights, pooling, `torch.inference_mode`) lands with the
-G-M bake-off, which needs downloaded weights. Everything around it — batching, caching, cards, pinning — is built
-and tested here without them, so the measurement passes can run unchanged the moment weights are available.
-Nothing above this package knows which encoder is behind the interface.
+**Phase boundary.** The runtime is built against an injected `Backend`, so loading, pooling, batching, caching,
+normalisation and ordering are all tested without weights — when real weights arrive the only untested thing is
+the model. `load_runtime` raises `NotReady` until the owner has fetched and pinned them (G0.4); the measurement
+passes then run unchanged. Nothing above this package knows which encoder is behind the interface.
