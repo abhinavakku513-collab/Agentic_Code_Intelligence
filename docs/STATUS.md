@@ -83,18 +83,18 @@ Toolchain lock (CPU-only torch) · `acis.core/sec/obs/appsdata/cli` · allow-lis
 `acis doctor` · `acis.eval` (metrics, splits + lock, decontamination, bootstrap, hash-chained ledger, guard, dev
 task, ladder, run files, verify-submission, official pipeline, `final`) · `acis.engine` with the **frozen**
 `SearchEngine` interface · `acis.prep/lexical/rank/embed` · `acis.mteb_adapter` (Modes A and B) · `acis.robust_hook`
-over a 256-document fixture · 544 tests + 3 pinned `xfail` guard-gap rows.
+over a 256-document fixture · 549 tests + 3 pinned `xfail` guard-gap rows.
 
 ## Carry-forward into Phase 2 (not gate blockers, recorded so they are not lost)
 - **The sealed-cache repair has no end-to-end proof.** Its paths are now unit-tested offline
   (`tests/unit/test_sealed_paths.py`), but the real fetch-and-load was impossible here. Treat the `--smoke` step
   above as a **precondition for RC0**, not a nicety.
-- **Seal detection is defence-in-depth, not exhaustive.** `is_sealed_file` matches the repository and hub-cache
-  layouts; a HuggingFace *datasets* cache stores `…/<config>/0.0.0/<hash>/apps-test.arrow`, which it would not
-  recognise. The APPS labels really are `data/<split>-*.parquet`, so no live gap — but do not read the detector as
-  a guarantee. The boundary remains physical (D19).
-- **Every ledger row so far was written from a dirty tree** (dev runs are allowed to be; only official runs
-  refuse). From Phase 2 the bake-off rows feed G-M and G1 — require a clean tree for anything a gate quotes.
+- **Seal detection now also covers the datasets-cache layout** (`<config>/0.0.0/<hash>/<dataset>-<split>.arrow`),
+  which is the layout the sealed warm step creates. It is still defence-in-depth, not a guarantee: the boundary
+  remains physical (D19).
+- **Gate rows are refused from a dirty tree** (dev rows are not — exploration happens on a dirty tree). The nine
+  existing rows predate that rule and all carry `dirty: true`; they are chain-intact and the split lock re-derives,
+  so they stand as harness evidence, but re-measure anything a Phase 2 gate wants to quote.
 - **B1 parity was measured stemmer-free on both sides** because PyStemmer is not installed, while the configs
   declare `lexical.stemmer: english`. Fine as a harness check; decide before BM25 is used for anything more
   (install PyStemmer and re-measure, or declare stemmer-free by choice).
