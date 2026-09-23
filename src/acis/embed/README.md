@@ -12,5 +12,13 @@ a model-free stand-in encoder that exists to validate the harness.
 | M-3 | A stand-in encoder reports `submission_capable = False` and is refused by a strict run | `tests/security/test_seal.py` |
 | M-4 | Cache keys include the model fingerprint and the numeric profile (docs/spec/02 §3) | `tests/property/test_invariants.py` |
 
-**Phase boundary.** The real runtime — token-budget batching, the content-addressed vector cache, numeric profiles,
-pooling per model card — is Phase 2. Nothing above this package knows which encoder is behind the interface.
+| M-5 | Batching groups by **padded** token budget and restores input order exactly; row *i* out is row *i* in | `tests/unit/test_embed_phase2.py` |
+| M-6 | The vector cache key covers model fingerprint, numeric profile, prep hash, text and prompt — omit one and a number is about a different model | `tests/unit/test_embed_phase2.py` |
+| M-7 | Cache writes are atomic and a corrupt entry is a miss, never an exception at the caller | `tests/unit/test_embed_phase2.py` |
+| M-8 | Instruction strings, pooling and truncation come from `configs/models/<name>.yaml`; only `statement_like` uses the APPS-tuned task string (INV-15) | `tests/unit/test_embed_phase2.py` |
+| M-9 | A model may ship only if pinned, permissively licensed and free of remote code (D4); others may be measured as reference | `tests/unit/test_embed_phase2.py` |
+
+**Phase boundary.** The encoder *runtime itself* (loading weights, pooling, `torch.inference_mode`) lands with the
+G-M bake-off, which needs downloaded weights. Everything around it — batching, caching, cards, pinning — is built
+and tested here without them, so the measurement passes can run unchanged the moment weights are available.
+Nothing above this package knows which encoder is behind the interface.
