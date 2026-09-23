@@ -30,6 +30,8 @@ class Bm25Index:
     delta: float = DEFAULT_DELTA
     method: str = DEFAULT_METHOD
     stemmer_language: str | None = "english"
+    #: True when the whole corpus tokenised to nothing — a real corpus of punctuation, numbers or stopwords.
+    vocabulary_empty: bool = False
     _retriever: Any = field(default=None, repr=False)
     _stopwords: list[str] = field(default_factory=list, repr=False)
     _stemmer: Any = field(default=None, repr=False)
@@ -57,8 +59,15 @@ class Bm25Index:
         stopwords = english_stopwords()
         stemmer = load_stemmer(stemmer_language)
         encoded = tokenize(texts, stopwords=stopwords, stemmer=stemmer)
-        retriever = bm25s.BM25(k1=k1, b=b, delta=delta, method=method)
-        retriever.index(encoded, show_progress=False)
+        # A corpus can tokenise to nothing — punctuation, bare numbers, stopwords only. bm25s raises from inside
+        # its own vocabulary construction when that happens, so the case is caught here and becomes an index that
+        # matches nothing. The lexical channel is then empty for that snapshot, which the snapshot records; the
+        # dense channel is unaffected and the documents stay retrievable (spec 02 §6b: never drop the baseline).
+        empty = not getattr(encoded, "vocab", None)
+        retriever = None
+        if not empty:
+            retriever = bm25s.BM25(k1=k1, b=b, delta=delta, method=method)
+            retriever.index(encoded, show_progress=False)
         return cls(
             doc_ids=tuple(str(d) for d in doc_ids),
             k1=k1,
@@ -66,6 +75,7 @@ class Bm25Index:
             delta=delta,
             method=method,
             stemmer_language=stemmer_language,
+            vocabulary_empty=empty,
             _retriever=retriever,
             _stopwords=stopwords,
             _stemmer=stemmer,
@@ -73,10 +83,12 @@ class Bm25Index:
 
     def retrieve(self, queries: Sequence[str], k: int) -> list[list[tuple[str, float]]]:
         """Top-`k` `(doc_id, score)` per query, in bm25s' own order (highest score first)."""
-        if self._retriever is None:
-            raise InvalidInput("index has not been built")
         if not queries:
             return []
+        if self.vocabulary_empty:
+            return [[] for _ in queries]
+        if self._retriever is None:
+            raise InvalidInput("index has not been built")
         k = max(1, min(int(k), self.size))
         encoded = tokenize(list(queries), stopwords=self._stopwords, stemmer=self._stemmer)
         indices, scores = self._retriever.retrieve(encoded, k=k, show_progress=False)

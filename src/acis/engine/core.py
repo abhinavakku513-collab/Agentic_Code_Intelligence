@@ -180,6 +180,10 @@ class AcisEngine:
         )
         vectors = self._embed_documents([store[h] for h in body_hashes]) if self.encoder is not None else None
         missing: tuple[str, ...] = () if vectors is not None else ("dense",)
+        if lexical.vocabulary_empty:
+            # Nothing in this corpus is indexable lexically. The snapshot says so rather than pretending to have
+            # a channel that can only ever return nothing.
+            missing = (*missing, "lexical")
 
         snapshot = Snapshot(
             snapshot_id=snapshot_id,

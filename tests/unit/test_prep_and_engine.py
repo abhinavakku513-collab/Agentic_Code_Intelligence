@@ -132,6 +132,29 @@ def test_bm25_rejects_mismatched_inputs():
         Bm25Index.build(["a"], ["x", "y"])
 
 
+def test_a_corpus_that_tokenises_to_nothing_is_an_empty_channel_not_a_crash():
+    """Found by the property suite: `bm25s` raises from inside its own vocabulary construction.
+
+    A corpus of bare numbers and punctuation has no indexable term. That is a real corpus, not a bug in the
+    caller, so the index matches nothing and says so — the dense channel is unaffected and the documents stay
+    retrievable (spec 02 §6b: a failure never removes the baseline).
+    """
+    index = Bm25Index.build(["a", "b"], ["0:0.0", "0.0:0"])
+    assert index.vocabulary_empty
+    assert index.search_one("anything", k=5) == []
+    assert index.retrieve(["one", "two"], k=5) == [[], []]
+
+
+def test_a_snapshot_reports_the_lexical_channel_it_does_not_have():
+    engine = AcisEngine.from_config(freeze_config(DEFAULT_CONFIG), encoder=HashingEncoder())
+    snapshot = engine.build_snapshot(
+        [Snippet(handle="a", text="0:0.0"), Snippet(handle="b", text="0.0:0")], source="empty-vocab"
+    )
+    assert "lexical" in snapshot.missing_channels and "dense" not in snapshot.missing_channels
+    hits = engine.search_batch(snapshot, ["q"], ["still has to answer"], top_k=2)["q"]
+    assert len(hits) == 2  # INV-10 holds whatever the lexical channel can offer
+
+
 # -- counters (INV-7) ---------------------------------------------------------------------------------------------
 def test_degradation_counts_and_records():
     counters = Counters()
