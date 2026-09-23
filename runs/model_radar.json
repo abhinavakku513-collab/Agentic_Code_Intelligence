@@ -1,0 +1,87 @@
+{
+  "excluded": [
+    {
+      "licence": "mit",
+      "name": "nomic-ai/CodeRankEmbed",
+      "reason": "ships custom modelling code (configuration_hf_nomic_bert.py, modeling_hf_nomic_bert.py) and requires trust_remote_code, which D4 and CLAUDE.md \u00a74 forbid"
+    },
+    {
+      "licence": "apache-2.0",
+      "name": "BAAI/bge-code-v1",
+      "reason": "1.5B parameters, outside the ~1B envelope (D4), and ships a custom tokenizer module"
+    },
+    {
+      "licence": "apache-2.0",
+      "name": "jinaai/jina-embeddings-v2-base-code",
+      "reason": "tagged custom_code: loading it needs trust_remote_code (D4)"
+    }
+  ],
+  "method": "metadata read from the Hugging Face API at the pinned revision \u2014 licence, architecture, pooling (1_Pooling/config.json), prompt configuration and file list \u2014 not from memory",
+  "recorded_utc": "2026-09-23T21:32:52Z",
+  "shortlist": [
+    {
+      "card_fingerprint": "b7405634c6f52c8869a9a3728707726562f0dc659419a6f336570197b4b49226",
+      "commit": "47ea694b257b703fee9253d75c2b1f2985180498",
+      "key": "granite-embedding-english-r2",
+      "licence": "apache-2.0",
+      "name": "ibm-granite/granite-embedding-english-r2",
+      "padding_side": "right",
+      "permissive": true,
+      "pinned_files": 8,
+      "pooling": "cls",
+      "trust_remote_code": false
+    },
+    {
+      "card_fingerprint": "3de3c0d7370929050f98f9be0e04acc7c4f6bfa2750ad2449510f87c1931e0a1",
+      "commit": "2ab6fa8ea2d674564defd37171ae19079b864b33",
+      "key": "granite-embedding-small-english-r2",
+      "licence": "apache-2.0",
+      "name": "ibm-granite/granite-embedding-small-english-r2",
+      "padding_side": "right",
+      "permissive": true,
+      "pinned_files": 8,
+      "pooling": "cls",
+      "trust_remote_code": false
+    },
+    {
+      "card_fingerprint": "861ce3721f49710e4463e28f00a661b7c47efb13f6705852cc603fc9741da278",
+      "commit": "e7f32e3c00f91d699e8c43b53106206bcc72bb22",
+      "key": "gte-modernbert-base",
+      "licence": "apache-2.0",
+      "name": "Alibaba-NLP/gte-modernbert-base",
+      "padding_side": "right",
+      "permissive": true,
+      "pinned_files": 8,
+      "pooling": "cls",
+      "trust_remote_code": false
+    },
+    {
+      "card_fingerprint": "006cbce6e056a3c916796b99e01082e1cec87e2be2f0bc9721183e070cdd44cb",
+      "commit": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+      "key": "qwen3-embedding-0.6b",
+      "licence": "apache-2.0",
+      "name": "Qwen/Qwen3-Embedding-0.6B",
+      "padding_side": "left",
+      "permissive": true,
+      "pinned_files": 10,
+      "pooling": "last_token",
+      "trust_remote_code": false
+    }
+  ],
+  "slo_screening": {
+    "measurements": [
+      {
+        "consequence": "measured for the radar, excluded from the bake-off by the SLO rather than by accuracy",
+        "dim": 1024,
+        "eligible": false,
+        "model": "Qwen/Qwen3-Embedding-0.6B",
+        "params": 595776512,
+        "projected_cold_pass_hours": 26.12,
+        "rows_per_second": 0.13,
+        "sample_rows": 48,
+        "slo_hours": 4.0
+      }
+    ],
+    "note": "D4 rejects a candidate whose projected cold pass exceeds the 4 h SLO, whatever it scores. Measured on the dev host (T-min, 8 physical cores) while the bake-off held most of the CPU, so the rate is pessimistic \u2014 but the margin is an order of magnitude, not a factor a free machine would close."
+  }
+}
