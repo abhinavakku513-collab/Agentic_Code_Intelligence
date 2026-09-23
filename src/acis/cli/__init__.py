@@ -59,9 +59,17 @@ def _add_eval(sub: argparse._SubParsersAction) -> None:
     off.add_argument("--config", default="configs/official.yaml")
     off.add_argument("--rc", default="RC0")
     off.add_argument("--mode", default="AB", choices=["A", "B", "AB"])
-    off.add_argument("--cold", action="store_true")
-    off.add_argument("--strict", action="store_true")
-    off.add_argument("--cache-verify", action="store_true")
+    off.add_argument("--cold", action="store_true", help="record this run as a cold pass in the ledger (D17)")
+    off.add_argument(
+        "--strict",
+        action="store_true",
+        help="documents intent; an official run is strict regardless and refuses a non-strict config",
+    )
+    off.add_argument(
+        "--cache-verify",
+        action="store_true",
+        help="reproduce rankings from shipped caches: books no held-out touch and writes no ledger row",
+    )
     off.add_argument("--out", default="")
 
     ver = evs.add_parser("verify-submission", help="check a run directory against the submission contract")
