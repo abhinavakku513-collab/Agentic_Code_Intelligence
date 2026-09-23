@@ -269,3 +269,45 @@ def test_p2_bm25_parity_with_the_mteb_baseline():
     assert score_run(apps.load_qrels(), ours)["ndcg_at_10"] == pytest.approx(
         score_run(apps.load_qrels(), theirs)["ndcg_at_10"], abs=1e-12
     )
+
+
+# -- is the float32 model of pytrec_eval right, or just lucky on the cases above? ---------------------------------
+@pytest.mark.parametrize("magnitude", [1e-3, 1.0, 10.0, 100.0, 1000.0])
+def test_b0_float32_grading_model_holds_across_magnitudes_and_gaps(magnitude):
+    """A differential search over the tie-collapse zone, not a handful of remembered rows.
+
+    Our metrics reproduce pytrec_eval by grading at float32 resolution. That claim is only worth anything if it
+    survives adversarial gaps at every magnitude — the exact regime where a "gap ≥ 1e-5" rule was shown to be
+    unsafe (docs/spec/01 V-08).
+    """
+    rng = random.Random(hash(magnitude) & 0xFFFF)
+    gold = "d3"
+    ids = [gold] + [f"x{i:04d}" for i in range(29)]
+    qrels = {"q": {gold: 1}}
+
+    for _ in range(40):
+        gap = magnitude * 10 ** rng.uniform(-9, -2)
+        start = rng.randrange(0, 6)  # where the gold sits
+        order = ids[1 : start + 1] + [gold] + ids[start + 1 :]
+        run = {"q": {d: magnitude - i * gap for i, d in enumerate(order)}}
+        ours = score_run(qrels, run, (1, 10))
+        theirs = score_run_reference(qrels, run, (1, 10))
+        for key in ("ndcg_at_10", "map_at_10", "recall_at_10", "precision_at_10", "hit_rate_at_10", "mrr_at_10"):
+            assert ours[key] == pytest.approx(theirs[key], abs=TOLERANCE), (
+                f"magnitude={magnitude} gap={gap:g} start={start} key={key}"
+            )
+
+
+def test_b0_exact_ties_and_negative_scores_still_agree():
+    """Two regimes the ladder does not produce but a future channel might: exact ties and negative similarities."""
+    gold = "d3"
+    ids = [gold] + [f"x{i:04d}" for i in range(11)]
+    qrels = {"q": {gold: 1}}
+    for run in (
+        {"q": dict.fromkeys(ids, 2.0)},  # everything tied
+        {"q": {d: -float(i) for i, d in enumerate(ids)}},  # negative, descending
+        {"q": {d: (0.0 if i % 2 else -0.0) for i, d in enumerate(ids)}},  # signed zeros
+    ):
+        ours, theirs = score_run(qrels, run, (10,)), score_run_reference(qrels, run, (10,))
+        for key in ("ndcg_at_10", "mrr_at_10", "recall_at_10"):
+            assert ours[key] == pytest.approx(theirs[key], abs=TOLERANCE), key

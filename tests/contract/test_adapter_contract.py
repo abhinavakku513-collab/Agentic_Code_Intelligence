@@ -359,3 +359,28 @@ def test_official_writer_refuses_unknown_objects(tmp_path):
 
     with pytest.raises(TypeError, match="not JSON-serialisable"):
         write_official_json(Weird(), tmp_path / "bad.json")
+
+
+def test_our_top_k_ceiling_covers_what_mteb_actually_asks_for():
+    """`MAX_TOP_K` clamps `search_batch`; if mteb ever asks for more, the clamp silently truncates a ranking.
+
+    mteb passes `top_k = max(k_values)`, so the ceiling has to be read off the harness rather than remembered.
+    A mismatch would abort the official run inside `assert_mode_a_contract` — loudly, but at the worst moment.
+    """
+    from mteb.abstasks.retrieval import AbsTaskRetrieval
+
+    from acis.engine.core import MAX_TOP_K
+
+    declared = max(AbsTaskRetrieval.k_values)
+    assert declared <= MAX_TOP_K, f"mteb asks for top_k={declared}, our ceiling is {MAX_TOP_K}"
+    assert make_toy_task()._top_k == declared
+
+
+def test_a_clamped_top_k_would_be_caught_not_silently_truncated(mode_a):
+    """The contract check is what makes the clamp safe: fewer entries than promised must raise."""
+    from acis.core.errors import InvalidInput
+    from acis.rank.compose import assert_mode_a_contract, rank_derived_scores
+
+    scores = rank_derived_scores([f"d{i}" for i in range(5)], 5)
+    with pytest.raises(InvalidInput, match="wrong number"):
+        assert_mode_a_contract(scores, top_k=10, corpus_size=10)

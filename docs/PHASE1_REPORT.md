@@ -121,6 +121,13 @@ test, a missing source file, an undefined test function or an unknown ledger id.
    tests, the fixture guard in the contract suite), but a planted-document assertion belongs there before that
    suite is cited as INV-15 evidence in Phase 3.
 
+## Two network paths, not one
+
+`AGENTS.md` says only `make fetch` uses the network. Phase 1 adds a second, dev-only one:
+`scripts/validate_reg_task.py`, which downloads a public REG benchmark into `~/.acis/reg` (never `ACIS_HOME`).
+Neither path exists at query time, and the official run is offline — but the sentence in `AGENTS.md` is now
+incomplete, and editing that file needs owner confirmation, so it is recorded here instead.
+
 ## What is deliberately absent
 
 The dense encoder runtime, LTR, PRF, hybrid fusion, the code-aware tokeniser, routing v1.1's OOD bank, and any
