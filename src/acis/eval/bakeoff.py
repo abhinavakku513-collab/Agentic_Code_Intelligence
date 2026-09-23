@@ -24,6 +24,7 @@ measuring is the part that needs weights.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -33,7 +34,7 @@ import yaml
 
 from acis.core.errors import InvalidInput
 from acis.core.paths import repo_path
-from acis.embed.registry import ModelCard, licence_is_permissive
+from acis.embed.registry import ModelCard, available_cards, licence_is_permissive, load_card
 from acis.embed.scorecard import Scorecard
 
 GATE_CONFIG = ("configs", "gates", "G-M.yaml")
@@ -258,6 +259,130 @@ def candidate_from_run(
         ledger_run_id=ledger_run_id,
         metrics=dict(metrics),
     )
+
+
+#: Documents plus queries in the official pass (D1). The cold-pass projection extrapolates a measured rate to it.
+OFFICIAL_ROWS = 8_765 + 3_765
+#: Rows the scorecard times. Large enough to amortise a batch, small enough that measuring is not the bake-off.
+SCORECARD_SAMPLE = 128
+
+
+def measure_card(
+    key: str,
+    *,
+    query_ids: Sequence[str] | None = None,
+    limit: int = 0,
+    top_k: int = 1000,
+    config_path: str = "configs/dev.yaml",
+    reference_only: bool = False,
+    record_row: bool = True,
+    sample: int = SCORECARD_SAMPLE,
+) -> Candidate:
+    """Measure one candidate end to end: accuracy on the dev queries, cost on the declared host.
+
+    Both halves run through the *shipping* path — the factory, the engine, the same preprocessing — so what is
+    measured is the system, not a notebook approximation of it. The cost half deliberately runs with the vector
+    cache switched off: a cold pass whose vectors are already on disk is a warm pass wearing its name (D17).
+    """
+    from acis.appsdata import apps  # noqa: PLC0415
+    from acis.core.config import load_frozen_config  # noqa: PLC0415
+    from acis.core.numeric import resolve_threads  # noqa: PLC0415
+    from acis.embed.factory import build_encoder, profile_of  # noqa: PLC0415
+    from acis.embed.scorecard import measure  # noqa: PLC0415
+    from acis.engine import AcisEngine  # noqa: PLC0415
+    from acis.eval import ladder  # noqa: PLC0415
+    from acis.eval.dev_task import dev_qrels  # noqa: PLC0415
+    from acis.eval.metrics import K_VALUES, score_run  # noqa: PLC0415
+    from acis.rank.compose import rank_derived_scores  # noqa: PLC0415
+
+    config = load_frozen_config(config_path).with_overrides(**{"model.encoder": key})
+    encoder = build_encoder(config)  # NotReady here means the weights are not fetched yet (G0.4)
+    card = load_card(key) if key in available_cards() else None
+
+    ids = list(query_ids) if query_ids is not None else list(apps.dev_query_ids())
+    if limit > 0:
+        ids = ids[:limit]
+    corpus = apps.load_corpus()
+    queries = apps.load_queries()
+
+    # -- cost, on an uncached encoder so "cold" means cold --------------------------------------------------
+    cold_encoder = build_encoder(config, cache=False)
+    scorecard = measure(
+        lambda texts: cold_encoder.encode(texts, is_query=False),
+        [d.text for d in corpus[:sample]],
+        model=getattr(encoder, "name", key),
+        numeric_profile=profile_of(config),
+        threads=resolve_threads(config.get("run.threads", "auto_physical")),
+        params=getattr(encoder, "n_parameters", None),
+        model_mb=getattr(encoder, "size_mb", None),
+        total_rows=OFFICIAL_ROWS,
+        notes=f"scorecard sample n={min(sample, len(corpus))}; projection to the official {OFFICIAL_ROWS} rows",
+    )
+
+    # -- accuracy, through the engine the submission would use ----------------------------------------------
+    engine = AcisEngine.from_config(config, encoder=encoder)
+    snapshot = engine.build_snapshot(corpus, source=f"bakeoff:{key}")
+    started = time.perf_counter()
+    ranked = engine.search_batch(snapshot, ids, [queries[q] for q in ids], top_k=top_k)
+    seconds = time.perf_counter() - started
+    run = {qid: rank_derived_scores(hits, top_k) for qid, hits in ranked.items()}
+    metrics = score_run(dev_qrels(ids), run, K_VALUES)
+
+    run_id = ""
+    if record_row:
+        result = ladder.LadderResult(
+            rung=f"bakeoff:{key}",
+            run=run,
+            metrics=metrics,
+            seconds=seconds,
+            n_queries=len(ids),
+            n_docs=len(corpus),
+            notes="G-M bake-off; dev split only",
+            extra={"scorecard": scorecard.as_row()},
+        )
+        kind = "gate" if len(ids) >= FULL_DEV_POOL else "dev"
+        run_id = ladder.record(result, kind=kind, extra={"model": key, "scorecard": scorecard.as_row()})
+
+    # A stand-in encoder is measured like anything else and can never be selected: it says so itself.
+    cannot_ship = reference_only or not getattr(encoder, "submission_capable", False)
+    if card is not None:
+        return candidate_from_run(
+            card,
+            metrics,
+            scorecard,
+            n_queries=len(ids),
+            ledger_run_id=run_id,
+            reference_only=cannot_ship,
+            params=scorecard.params,
+        )
+    return Candidate(
+        key=key,
+        name=getattr(encoder, "name", key),
+        ndcg_at_10=float(metrics.get("ndcg_at_10", 0.0)) * 100.0,
+        params=scorecard.params,
+        scorecard=scorecard,
+        permissive=True,
+        pinned=False,
+        reference_only=cannot_ship,
+        n_queries=len(ids),
+        ledger_run_id=run_id,
+        metrics=dict(metrics),
+    )
+
+
+def run_gate_m(
+    keys: Sequence[str],
+    *,
+    limit: int = 0,
+    rule: GateRule | None = None,
+    reference_only: Sequence[str] = (),
+    record_row: bool = True,
+) -> tuple[list[Candidate], GateDecision]:
+    """Measure every named candidate and apply the rule. One command, so G-M is a run rather than a project."""
+    candidates = [
+        measure_card(key, limit=limit, reference_only=key in set(reference_only), record_row=record_row) for key in keys
+    ]
+    return candidates, decide(candidates, rule=rule)
 
 
 def record_decision(decision: GateDecision, *, path: str | Path | None = None) -> Path:

@@ -243,12 +243,42 @@ def _eval_parity(args: argparse.Namespace) -> int:
 
 
 def _eval_gate(args: argparse.Namespace) -> int:
+    if args.gate.upper() in ("G-M", "GM"):
+        return _gate_m(args)
     print(
         f"gate {args.gate}: the gate procedures are declared in configs/gates/ and run from Phase 2 onwards "
         "(docs/spec/03 §7). Phase 1 ships the statistics they use: acis.eval.bootstrap.",
         file=sys.stderr,
     )
     return 2
+
+
+def _gate_m(args: argparse.Namespace) -> int:
+    """The encoder bake-off: measure every candidate, apply the D4 rule, print the table.
+
+    The decision is only *written* when asked for (`--record`), and only the full decision set can produce one —
+    a smoke run over 50 queries is a look, not a gate (docs/spec/09 §2).
+    """
+    from acis.embed.registry import available_cards
+    from acis.eval.bakeoff import FULL_DEV_POOL, record_decision, render_table, run_gate_m
+
+    keys = [k.strip() for k in args.models.split(",") if k.strip()] or available_cards()
+    if not keys:
+        raise InvalidInput("no model cards in configs/models/; G0.4 writes them")
+    reference = [k.strip() for k in args.reference.split(",") if k.strip()]
+
+    candidates, decision = run_gate_m(keys, limit=args.limit, reference_only=reference)
+    print(render_table(candidates, decision))
+    print(f"\nwinner={decision.winner}  best={decision.best}  tolerance={decision.tolerance_pts} pt")
+    if decision.reference_gap_pts:
+        print(f"the best measured candidate is {decision.reference_gap_pts:.2f} pt ahead of the best that can ship")
+
+    measured_on = min((c.n_queries for c in candidates), default=0)
+    if args.record:
+        if measured_on < FULL_DEV_POOL:
+            raise InvalidInput("a gate decision needs all 5,000 dev queries (docs/spec/09 §2)", measured_on=measured_on)
+        print(f"wrote {record_decision(decision)}")
+    return 0
 
 
 def _eval_robustness(args: argparse.Namespace) -> int:

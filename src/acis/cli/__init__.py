@@ -51,6 +51,12 @@ def _add_eval(sub: argparse._SubParsersAction) -> None:
     gate = evs.add_parser("gate", help="run a pre-declared gate procedure")
     gate.add_argument("--gate", required=True)
     gate.add_argument("--config", default="configs/dev.yaml")
+    gate.add_argument("--models", default="", help="G-M: comma-separated card keys to measure (default: all cards)")
+    gate.add_argument("--reference", default="", help="G-M: card keys measured for reference, never selected")
+    gate.add_argument("--limit", type=int, default=0, help="first N dev queries (0 = all 5,000; a gate needs all)")
+    gate.add_argument(
+        "--record", action="store_true", help="write the decision to configs/gates/<id>.yaml (written once)"
+    )
 
     rob = evs.add_parser("robustness", help="perturbation families vs the frozen base (G-OOD)")
     rob.add_argument("--config", default="configs/dev.yaml")

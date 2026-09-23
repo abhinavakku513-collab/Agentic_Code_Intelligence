@@ -119,6 +119,17 @@ class TransformersBackend:
     def weights_digest(self) -> str:
         return self._digest
 
+    @property
+    def n_parameters(self) -> int:
+        """Parameter count, counted rather than taken from a model name (G-M picks the smallest, D4)."""
+        return int(sum(p.numel() for p in self._model.parameters()))
+
+    @property
+    def size_mb(self) -> float:
+        """On-disk size of the weights — one of the scored dimensions (FAQ)."""
+        total = sum(p.stat().st_size for p in self.model_dir.glob("*.safetensors") if p.is_file())
+        return round(total / (1024.0 * 1024.0), 2)
+
 
 def _weights_digest(model_dir: Path) -> str:
     """Hash of the files that decide what the model computes — the basis of `model_fingerprint`."""
@@ -159,6 +170,17 @@ class EncoderRuntime:
     def submission_capable(self) -> bool:
         """A real model may ship; the harness stand-in may not. Strict runs check this."""
         return True
+
+    @property
+    def n_parameters(self) -> int | None:
+        """What the backend counted, or `None`. An unknown size is never treated as a small one (G-M)."""
+        value = getattr(self.backend, "n_parameters", None)
+        return int(value) if value is not None else None
+
+    @property
+    def size_mb(self) -> float | None:
+        value = getattr(self.backend, "size_mb", None)
+        return float(value) if value is not None else None
 
     @property
     def fingerprint(self) -> str:
