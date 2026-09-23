@@ -62,10 +62,13 @@ def make_run_dir(tmp_path: Path, **overrides) -> Path:
 
     manifest = {
         "adapter_invocations": overrides.get("adapter_invocations", 1),
+        "encode_calls": overrides.get("encode_calls", 0),
         "fallbacks": overrides.get("fallbacks", 0),
         "agent_calls": overrides.get("agent_calls", 0),
         "strict": overrides.get("strict", True),
-        "mode": "A",
+        "harness_dry_run": overrides.get("harness_dry_run", False),
+        "test_touch_count": overrides.get("test_touch_count", 0),
+        "mode": overrides.get("mode", "A"),
         "config_hash": "0" * 64,
         "model_revision": overrides.get("manifest_model_revision", "abcdef123456+0123456789ab"),
         "split": "test",
@@ -80,8 +83,18 @@ def status_of(report, name: str) -> str:
 
 
 # -- the happy path ---------------------------------------------------------------------------------------------
-def test_a_well_formed_run_directory_passes(tmp_path):
-    report = verify_submission(make_run_dir(tmp_path), qrels=QRELS)
+@pytest.fixture
+def booked_ledger(tmp_path, monkeypatch):
+    """A ledger holding this run's row, as a real official run would have written before verification."""
+    monkeypatch.setattr(ledger, "ledger_path", lambda: tmp_path / "ledger.jsonl")
+    return tmp_path / "ledger.jsonl"
+
+
+def test_a_well_formed_run_directory_passes(tmp_path, booked_ledger):
+    directory = make_run_dir(tmp_path)
+    ledger.append({"kind": "rc", "test_touch_count": 0, "run_dir": str(directory)})
+    write_checksums(directory)
+    report = verify_submission(directory, qrels=QRELS)
     assert report.passed, report.render()
     assert status_of(report, "run.trec re-scores to the JSON") == PASS
     assert status_of(report, "both mode JSONs present") == PASS
@@ -113,20 +126,33 @@ def test_a_zero_evaluation_time_fails(tmp_path):
     assert status_of(report, "evaluation_time above floor") == FAIL
 
 
+DISPATCH_CHECK = "our code ran, on the dispatch path the mode requires"
+
+
 @pytest.mark.parametrize(
     "field,value,check",
     [
-        ("adapter_invocations", 0, "manifest.adapter_invocations == 1"),
-        ("adapter_invocations", 2, "manifest.adapter_invocations == 1"),
+        ("adapter_invocations", 0, DISPATCH_CHECK),
+        ("adapter_invocations", 2, DISPATCH_CHECK),
+        ("encode_calls", 3, DISPATCH_CHECK),
         ("fallbacks", 3, "manifest.fallbacks == 0"),
         ("agent_calls", 1, "manifest.agent_calls == 0"),
         ("strict", False, "manifest.strict is true"),
+        ("harness_dry_run", True, "not a harness dry run"),
     ],
 )
 def test_manifest_expectations(tmp_path, field, value, check):
     report = verify_submission(make_run_dir(tmp_path, **{field: value}), qrels=QRELS)
     assert status_of(report, check) == FAIL
     assert not report.passed
+
+
+def test_mode_b_is_verified_by_its_own_dispatch_evidence(tmp_path):
+    """RC0 is Mode B (D8): there `encode()` must have run and `search()` must not — the mirror of Mode A."""
+    good = make_run_dir(tmp_path / "ok", mode="B", adapter_invocations=0, encode_calls=2)
+    assert status_of(verify_submission(good, qrels=QRELS), DISPATCH_CHECK) == PASS
+    bad = make_run_dir(tmp_path / "bad", mode="B", adapter_invocations=0, encode_calls=0)
+    assert status_of(verify_submission(bad, qrels=QRELS), DISPATCH_CHECK) == FAIL
 
 
 def test_a_model_revision_mismatch_fails(tmp_path):
@@ -155,19 +181,31 @@ def test_a_missing_mode_json_fails(tmp_path):
     assert status_of(report, "both mode JSONs present") == FAIL
 
 
-def test_the_ledger_touch_count_is_cross_checked(tmp_path, monkeypatch):
-    directory = make_run_dir(tmp_path)
-    manifest = json.loads((directory / MANIFEST_JSON).read_text(encoding="utf-8"))
-    manifest["test_touch_count"] = 99
-    (directory / MANIFEST_JSON).write_text(json.dumps(manifest), encoding="utf-8")
+def test_the_ledger_touch_count_must_match_this_runs_row(tmp_path, monkeypatch):
+    """A manifest declaring fewer touches than it spent must fail, whatever the ledger total happens to be."""
+    monkeypatch.setattr(ledger, "ledger_path", lambda: tmp_path / "ledger.jsonl")
+    directory = make_run_dir(tmp_path, test_touch_count=2)
+    ledger.append({"kind": "rc", "test_touch_count": 1, "run_dir": str(directory)})
     write_checksums(directory)
-    monkeypatch.setattr(ledger, "ledger_path", lambda: tmp_path / "empty-ledger.jsonl")
     report = verify_submission(directory, qrels=QRELS)
     assert status_of(report, "held-out touches agree with the ledger") == FAIL
 
 
-def test_report_renders_and_serialises(tmp_path):
-    report = verify_submission(make_run_dir(tmp_path), qrels=QRELS)
+def test_a_manifest_without_a_touch_count_fails_rather_than_skipping(tmp_path):
+    directory = make_run_dir(tmp_path)
+    manifest = json.loads((directory / MANIFEST_JSON).read_text(encoding="utf-8"))
+    del manifest["test_touch_count"]
+    (directory / MANIFEST_JSON).write_text(json.dumps(manifest), encoding="utf-8")
+    write_checksums(directory)
+    report = verify_submission(directory, qrels=QRELS)
+    assert status_of(report, "held-out touches agree with the ledger") == FAIL
+
+
+def test_report_renders_and_serialises(tmp_path, booked_ledger):
+    directory = make_run_dir(tmp_path)
+    ledger.append({"kind": "rc", "test_touch_count": 0, "run_dir": str(directory)})
+    write_checksums(directory)
+    report = verify_submission(directory, qrels=QRELS)
     text = report.render()
     assert "verdict: PASS" in text
     payload = report.to_dict()

@@ -33,8 +33,15 @@ DEV_ALLOWLIST: tuple[str, ...] = (
     f"data/{DEV_SPLIT}-*.parquet",
     "README.md",
 )
+#: Patterns matched against a repository-relative name **and** against any suffix of a longer path, because the
+#: same file appears in three shapes: as a repository entry (`data/<split>-00000-of-00001.parquet`), inside an HF
+#: cache (`datasets--CoIR-Retrieval--apps/snapshots/<sha>/data/<split>-00000-of-00001.parquet`), and as a bare
+#: basename if someone copies it out. A detector that only recognises the first shape is blind exactly where a
+#: real leak would land.
 SEALED_PATTERNS: tuple[str, ...] = (
     f"data/{SEALED_SPLIT}-*.parquet",
+    f"qrels/{SEALED_SPLIT}-*.parquet",
+    f"{SEALED_SPLIT}-*-of-*.parquet",
     f"*qrels*{SEALED_SPLIT}*",
     f"*{SEALED_SPLIT}*qrels*",
 )
@@ -51,9 +58,16 @@ APPS = DatasetPin(repo=APPS_REPO, revision=APPS_REVISION, task=APPS_TASK)
 
 
 def is_sealed_file(name: str) -> bool:
-    """True if a repository file holds held-out labels and may never enter the dev environment (INV-8)."""
-    lowered = name.replace("\\", "/").lower()
-    return any(fnmatch.fnmatch(lowered, pattern.lower()) for pattern in SEALED_PATTERNS)
+    """True if a path holds held-out labels and may never enter the dev environment (INV-8).
+
+    Every suffix of the path is tested, so a file is recognised whether it is named as a repository entry, as a
+    deeply nested HF-cache blob, or as a bare basename someone copied out. Prevention (the fetch allow-list) and
+    detection (`assert_seal`) both rely on this, and detection is the half that sees paths we did not construct.
+    """
+    lowered = name.replace("\\", "/").lower().lstrip("/")
+    parts = lowered.split("/")
+    candidates = ["/".join(parts[i:]) for i in range(len(parts))]
+    return any(fnmatch.fnmatch(candidate, pattern.lower()) for candidate in candidates for pattern in SEALED_PATTERNS)
 
 
 def is_dev_allowed(name: str) -> bool:

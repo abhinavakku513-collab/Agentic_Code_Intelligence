@@ -134,6 +134,12 @@ def test_touches_used() -> int:
 
 def append(row: Mapping[str, Any]) -> LedgerRow:
     """Append one row, chaining it to the previous. The only writer of `runs/ledger.jsonl`."""
+    problems = verify_chain()
+    if problems:
+        raise InvalidInput(
+            "refusing to extend a ledger whose chain is already broken; investigate before recording anything else",
+            problems=problems[:3],
+        )
     payload = dict(row)
     payload.setdefault("ts", time.time())
     payload.setdefault("kind", "dev")
@@ -178,6 +184,9 @@ def verify_chain() -> list[str]:
         recorded = payload.pop("row_hash", None)
         if payload.get("prev_hash") != prev:
             problems.append(f"row {i} ({row.get('run_id')}): prev_hash does not match the previous row")
+        if recorded is None:
+            problems.append(f"row {i} ({row.get('run_id')}): row_hash is missing — the row is truncated")
+            break
         if hash_obj(payload) != recorded:
             problems.append(f"row {i} ({row.get('run_id')}): row_hash does not match its content")
         prev = str(recorded)

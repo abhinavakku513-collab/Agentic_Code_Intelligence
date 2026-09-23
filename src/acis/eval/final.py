@@ -34,7 +34,12 @@ def load_holdout_qrels() -> Mapping[str, Mapping[str, int]]:
     _require_sealed_environment()
     import pyarrow.parquet as pq  # noqa: PLC0415
 
-    files = sorted(p for p in (sealed_root() / "hf").rglob("*.parquet") if "train" not in p.name)
+    # A *positive* match on the sealed patterns, not "anything that is not train": once the sealed cache also
+    # holds the corpus and the queries (it must, or the official run cannot load the task offline), a negative
+    # filter would read a corpus shard as qrels and die on a missing `query-id` column.
+    from acis.appsdata.sources import is_sealed_file  # noqa: PLC0415
+
+    files = sorted(p for p in (sealed_root() / "hf").rglob("*.parquet") if is_sealed_file(str(p)))
     if not files:
         raise SealedDataAccess(
             f"no held-out label file under {sealed_root() / 'hf'}; the owner runs `acis fetch --sealed`"

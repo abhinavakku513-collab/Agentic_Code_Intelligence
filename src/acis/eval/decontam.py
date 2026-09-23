@@ -99,23 +99,43 @@ def decontaminate(
     threshold: float = DROP_THRESHOLD,
     ngram: int = NGRAM,
     num_perm: int = NUM_PERM,
+    validate_ids: bool = False,
 ) -> DecontamReport:
     """Drop every training entry whose text is ≥ `threshold` Jaccard-similar to any reference input.
 
     `train` is `{id: text}`; `reference` is the held-out **input** texts. The estimate comes from MinHash LSH and is
     confirmed exactly on the candidates, so a near-miss is never dropped on an approximation alone.
+
+    `validate_ids=True` (what every real training export must pass) asserts that the keys are dev-pool query ids
+    and that no held-out id reached this path. It is off by default so the function stays usable on arbitrary
+    `{id: text}` mappings in tests and on non-APPS corpora.
     """
+    from acis.eval.guard import assert_dev_pool, assert_no_holdout_ids  # noqa: PLC0415 — avoids an import cycle
+
+    # The programmatic half of the seal, wired in at the one place that currently fits training material:
+    # every key must be a dev-pool query, and no held-out id may reach it (docs/spec/03 §5).
+    if validate_ids and train:
+        assert_no_holdout_ids(train.keys(), context="decontaminate")
+        assert_dev_pool(train.keys(), context="decontaminate")
+
     reference_texts = [r for r in reference if r and r.strip()]
     if not train or not reference_texts:
         return DecontamReport(len(train), len(reference_texts), (), threshold, ngram, num_perm)
 
     from datasketch import MinHashLSH  # noqa: PLC0415
 
+    from acis.core.hashing import sha256_text  # noqa: PLC0415
+
     lsh = MinHashLSH(threshold=threshold, num_perm=num_perm)
     ref_shingles: list[set[bytes]] = []
+    # The reference key is a digest of the text, never its position in the held-out list. A positional index is
+    # reversible in the dev environment, which would turn the drop report into a held-out ↔ train alignment —
+    # an artifact we generated that points at specific held-out queries.
+    ref_keys: list[str] = []
     for i, text in enumerate(reference_texts):
         lsh.insert(f"r{i}", _minhash(text, num_perm=num_perm, ngram=ngram))
         ref_shingles.append(shingles(text, ngram))
+        ref_keys.append(sha256_text(normalise(text))[:16])
 
     dropped: list[str] = []
     matches: dict[str, str] = {}
@@ -128,7 +148,7 @@ def decontaminate(
             idx = int(cand[1:])
             if jaccard(own, ref_shingles[idx]) >= threshold:
                 dropped.append(key)
-                matches[key] = cand
+                matches[key] = ref_keys[idx]
                 break
 
     return DecontamReport(

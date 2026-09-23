@@ -35,6 +35,7 @@ def _add_eval(sub: argparse._SubParsersAction) -> None:
     dev.add_argument("--system", default="bm25", help="ladder rung to run (see `acis eval ladder --list`)")
     dev.add_argument("--limit", type=int, default=0, help="evaluate only the first N queries (smoke runs)")
     dev.add_argument("--fold", type=int, default=-1, help="restrict to one fold (-1 = all 5,000 TRAIN queries)")
+    dev.add_argument("--milestone", default="", help="required when --fold names DEV-H: its touch is counted once")
     dev.add_argument("--out", default="")
 
     ladder = evs.add_parser("ladder", help="run ladder rungs B0/B1 and record them in the ledger")
@@ -42,6 +43,10 @@ def _add_eval(sub: argparse._SubParsersAction) -> None:
     ladder.add_argument("--rungs", default="B0,B1")
     ladder.add_argument("--limit", type=int, default=0)
     ladder.add_argument("--list", action="store_true")
+
+    parity = evs.add_parser("parity", help="B0 vs B1: our BM25 against mteb/baseline-bm25s, recorded in the ledger")
+    parity.add_argument("--limit", type=int, default=0, help="first N dev queries (0 = all 5,000)")
+    parity.add_argument("--top-k", type=int, default=1000)
 
     gate = evs.add_parser("gate", help="run a pre-declared gate procedure")
     gate.add_argument("--gate", required=True)

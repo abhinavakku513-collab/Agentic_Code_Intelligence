@@ -183,14 +183,49 @@ def top_k_overlap(a: Mapping[str, Mapping[str, float]], b: Mapping[str, Mapping[
     return total / len(shared)
 
 
-def record(result: LadderResult, *, kind: str = "dev", extra: Mapping[str, Any] | None = None) -> str:
+DECISION_SET_ALL = "train_all_5000"
+DECISION_SET_DEV_H = "dev_h"
+GATE_ELIGIBLE_SETS = (DECISION_SET_ALL,)
+
+
+def decision_set_of(n_queries: int, *, fold: int | None = None) -> str:
+    """Name the set a row was measured on, so a later reader cannot mistake a smoke run for a decision.
+
+    Gates accept only `train_all_5000` (non-fit components) or K-fold OOF (trained ones, from Phase 3);
+    `dev_h` is a counted confirmation and `subset_<n>` is a smoke run (docs/spec/03 §5, docs/spec/09 §2).
+    """
+    from acis.eval.splits import DEV_H_FOLD  # noqa: PLC0415
+
+    if fold is not None and fold >= 0:
+        return DECISION_SET_DEV_H if fold == DEV_H_FOLD else f"fold_{fold}"
+    return DECISION_SET_ALL if n_queries >= FULL_DEV_POOL else f"subset_{n_queries}"
+
+
+FULL_DEV_POOL = 5000
+
+
+def record(
+    result: LadderResult,
+    *,
+    kind: str = "dev",
+    fold: int | None = None,
+    extra: Mapping[str, Any] | None = None,
+) -> str:
     """Append a ladder result to the ledger and return its `run_id` (INV-14: numbers exist only here)."""
+    decision_set = decision_set_of(result.n_queries, fold=fold)
+    if kind == "gate" and decision_set not in GATE_ELIGIBLE_SETS:
+        raise InvalidInput(
+            "a gate decision may only be recorded on the full decision set (docs/spec/09 §2)",
+            decision_set=decision_set,
+            n_queries=result.n_queries,
+        )
     row = (
         ledger.LedgerRowBuilder(kind=kind)
         .with_metrics(result.metrics)
         .with_fields(
             rung=result.rung,
             dataset="dev",
+            decision_set=decision_set,
             n_queries=result.n_queries,
             n_docs=result.n_docs,
             split_lock_hash=_split_lock_hash_or_blank(),
@@ -208,6 +243,28 @@ def _split_lock_hash_or_blank() -> str:
         return split_lock_hash()
     except Exception:  # noqa: BLE001 — the lock is written once, by `acis eval splits --write`
         return ""
+
+
+def run_parity(query_ids: Sequence[str] | None = None, *, limit: int = 0, top_k: int = DEFAULT_TOP_K) -> dict[str, Any]:
+    """B0 vs B1: run both BM25 sides and record the agreement, so the parity row is reproducible from code.
+
+    The number that matters — "≥ 95 % of queries have an identical top-10" — has to come from a committed command,
+    not from an ad-hoc shell one-liner, or a later reader cannot regenerate it.
+    """
+    ids = _selected_queries(query_ids, limit)
+    ours = run_rung("bm25_acis", query_ids=ids, top_k=top_k)
+    theirs = run_rung("bm25_mteb", query_ids=ids, top_k=top_k)
+    agreement = {
+        "parity_top10_identical": round(top_k_agreement(ours.run, theirs.run, 10), 6),
+        "parity_top100_identical": round(top_k_agreement(ours.run, theirs.run, 100), 6),
+        "parity_top10_overlap": round(top_k_overlap(ours.run, theirs.run, 10), 6),
+        "delta_ndcg_at_10": round(abs(ours.metrics["ndcg_at_10"] - theirs.metrics["ndcg_at_10"]), 12),
+    }
+    run_ids = {
+        "bm25_acis": record(ours, extra=dict(agreement)),
+        "bm25_mteb": record(theirs, extra=dict(agreement)),
+    }
+    return {"n_queries": len(ids), **agreement, "ledger": run_ids}
 
 
 def run_spec(engine: Any, spec: EvalSpec) -> EvalReport:
@@ -229,6 +286,7 @@ __all__ = [
     "run_bm25_acis",
     "run_bm25_mteb",
     "run_oracle",
+    "run_parity",
     "run_random",
     "run_rung",
     "run_spec",

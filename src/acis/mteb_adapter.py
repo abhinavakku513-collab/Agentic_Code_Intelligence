@@ -39,6 +39,8 @@ from acis.rank.compose import assert_mode_a_contract, rank_derived_scores
 MODE_ENV = "ACIS_MODE"
 CONFIG_ENV = "ACIS_CONFIG"
 RUN_DIR_ENV = "ACIS_RUN_DIR"
+TOUCH_ENV = "ACIS_TEST_TOUCH_COUNT"
+DRY_RUN_ENV = "ACIS_HARNESS_DRY_RUN"
 MANIFEST_NAME = "manifest.json"
 
 
@@ -82,6 +84,8 @@ class _EncoderSurface(AbsEncoder):
         self.encode_calls = 0
         self._snapshot = None
         self._run_started = time.time()
+        #: Held-out touches this run spends. The official script sets it; a dev run leaves it at zero.
+        self.test_touch_count = int(os.environ.get(TOUCH_ENV, "0"))
 
     # `mteb_model_meta` is a class attribute on AbsEncoder; a property overrides it cleanly.
     @property
@@ -104,11 +108,22 @@ class _EncoderSurface(AbsEncoder):
                 f"encoder {name!r} is not available yet: the dense runtime is built in Phase 2 (docs/spec/07)"
             )
         encoder = HashingEncoder(dim=int(self.cfg.get("model.dim", 4096)))
-        if self.cfg.strict and not encoder.submission_capable:
+        if self.cfg.strict and not encoder.submission_capable and not self.harness_dry_run:
             raise StrictViolation(
                 "the hashing stand-in encoder may not serve a strict run; it exists to validate the harness only"
             )
         return encoder
+
+    @property
+    def harness_dry_run(self) -> bool:
+        """Explicit opt-out that lets the *official pipeline* be exercised on a fixture task (Phase 1).
+
+        Without it the strict-mode interlock — which correctly refuses a stand-in encoder — would also make the
+        official path impossible to test, leaving the single most consequential piece of code in the repository
+        untested until the day it runs. The flag is written into the manifest and `verify-submission` fails any
+        run that carries it, so it cannot quietly produce a submission.
+        """
+        return os.environ.get(DRY_RUN_ENV) == "1"
 
     def encode(
         self,
@@ -140,11 +155,18 @@ class _EncoderSurface(AbsEncoder):
         )
 
     def _prepare_query(self, text: str) -> str:
+        """Exactly the preparation Mode A applies, including the engine's own input rules.
+
+        Going straight to `build_view` here would skip `q1` normalisation and the over-long-query rule that
+        `AcisEngine.normalise_query` enforces, so Mode A and Mode B would encode subtly different text and the
+        A-vs-B comparison (gate G-AB) would be measuring the preprocessing rather than the pipeline.
+        """
         from acis.prep.truncate import head_tail  # noqa: PLC0415
         from acis.prep.views import build_view  # noqa: PLC0415
 
+        normalised, _truncated = self.engine.normalise_query(text)
         prep = self.cfg.section("prep").get("query", {})
-        view = build_view(text, str(prep.get("view", "V0")))
+        view = build_view(normalised, str(prep.get("view", "V0")))
         return head_tail(
             view,
             max_tokens=int(prep.get("max_tokens", 1024)),
@@ -175,11 +197,14 @@ class _EncoderSurface(AbsEncoder):
             "encode_calls": self.encode_calls,
             "mode": "A" if isinstance(self, PrePostPipelineEncoder) else "B",
             "strict": bool(self.cfg.strict),
+            "harness_dry_run": self.harness_dry_run,
             "agent_calls": 0,
             "fallbacks": sum(
                 v for k, v in (engine.counters.snapshot().items() if engine else []) if k.startswith("degradation.")
             ),
             "degradations": list(engine.counters.degradations()) if engine else [],
+            # How many held-out touches this run spends. A dev run spends none; an official A+B run spends two.
+            "test_touch_count": self.test_touch_count,
             "config_hash": self.cfg.config_hash,
             "model_revision": revision_for(self.cfg),
             "model_fingerprint": engine.model_fingerprint if engine else "none",
@@ -191,8 +216,10 @@ class _EncoderSurface(AbsEncoder):
             "written_ts": time.time(),
         }
 
-    def write_run_manifest(self, task_metadata: Any = None, hf_split: str | None = None) -> Path:
-        path = self.run_dir() / MANIFEST_NAME
+    def write_run_manifest(self, task_metadata: Any = None, hf_split: str | None = None, *, suffix: str = "") -> Path:
+        """Write the manifest. `suffix` keeps an A+B run's two manifests apart (`manifest.A.json`)."""
+        name = MANIFEST_NAME if not suffix else MANIFEST_NAME.replace(".json", f".{suffix}.json")
+        path = self.run_dir() / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(self.manifest(task_metadata, hf_split), indent=2, default=_json_default), encoding="utf-8"
@@ -276,6 +303,7 @@ def _corpus_columns(corpus: Any) -> tuple[list[str], list[str], list[str]]:
 
 __all__ = [
     "CONFIG_ENV",
+    "DRY_RUN_ENV",
     "MANIFEST_NAME",
     "MODE_ENV",
     "RUN_DIR_ENV",

@@ -20,3 +20,4 @@ dist/
 *.safetensors
 .acis-home/
 .acis-reg/
+.acis-reg/

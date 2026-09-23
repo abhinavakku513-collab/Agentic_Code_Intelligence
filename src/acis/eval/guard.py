@@ -33,7 +33,11 @@ def assert_dev_split(split: str, *, context: str = "") -> str:
 
 
 def caller_is_sanctioned(depth: int = 12) -> bool:
-    """True when `acis.eval.final` is somewhere on the call stack."""
+    """True when `acis.eval.final` is somewhere on the call stack.
+
+    This is a sanity check, not a boundary: any code that enters that module satisfies it. The boundary is
+    physical — the labels live outside the working tree and only a sealed `HF_HOME` can reach them (D19).
+    """
     frame = inspect.currentframe()
     try:
         for _ in range(depth):
@@ -90,8 +94,25 @@ def assert_dev_pool(ids: Iterable[str], *, context: str) -> list[str]:
 
 
 def assert_ids_not_features(feature_names: Iterable[str]) -> None:
-    """INV-4: no feature may be derived from a document or query id."""
-    banned = ("query_id", "qid", "doc_id", "docid", "corpus_id", "external_id")
+    """INV-4: no feature may be derived from a document or query id — or from its position in the corpus.
+
+    Position matters as much as identity here: on the AppsRetrieval corpus the ordinals 0–4,999 are exactly the
+    training-partition documents and 5,000–8,764 exactly the held-out ones, so `ordinal < 5000` *is* the
+    train-document detector CLAUDE.md §4 forbids, with no error at all.
+    """
+    banned = (
+        "query_id",
+        "qid",
+        "doc_id",
+        "docid",
+        "corpus_id",
+        "external_id",
+        "ordinal",
+        "partition",
+        "corpus_order",
+        "position",
+        "row_index",
+    )
     hits = sorted({n for n in feature_names if any(b in str(n).lower() for b in banned)})
     if hits:
         raise SealedDataAccess("external ids may never be features (INV-4)", features=hits)

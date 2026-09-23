@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -126,6 +127,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     handler = {
         "dev": _eval_dev,
         "ladder": _eval_ladder,
+        "parity": _eval_parity,
         "gate": _eval_gate,
         "robustness": _eval_robustness,
         "official": _eval_official,
@@ -136,18 +138,42 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return handler(args)
 
 
+def _consume_dev_h_touch(args: argparse.Namespace, guard: Any) -> None:
+    """DEV-H (F4) is a once-per-milestone confirmation, not a decision set (docs/spec/03 §5).
+
+    Without a counter, `acis eval dev --fold 4` could be run repeatedly during tuning and DEV-H would quietly
+    become the decision set, which is exactly the over-fitting the split was designed to prevent. Every use is
+    recorded and a second use inside the same milestone is refused.
+    """
+    milestone = str(getattr(args, "milestone", "") or os.environ.get("ACIS_MILESTONE", "") or "unlabelled")
+    already = guard.dev_h_touches_for(milestone)
+    if already and os.environ.get("ACIS_ALLOW_REPEAT_DEV_H") != "1":
+        raise InvalidInput(
+            "DEV-H has already been used for this milestone; it is a confirmation, not a decision set",
+            milestone=milestone,
+            touches=already,
+            hint="decide on all 5,000 dev queries (or K-fold OOF), or declare a new milestone",
+        )
+    guard.record_dev_h_touch(reason=f"acis eval dev --system {args.system}", milestone=milestone)
+
+
 def _eval_dev(args: argparse.Namespace) -> int:
     from acis.appsdata import apps
-    from acis.eval import ladder, splits
+    from acis.eval import guard, ladder, splits
+
+    if not apps.is_available():
+        raise InvalidInput("dataset assets are missing: run `make fetch` first")
 
     query_ids = None
     if args.fold >= 0:
+        if args.fold not in splits.fold_members():
+            raise InvalidInput(f"fold {args.fold} does not exist", folds=splits.DEFAULT_FOLDS)
         query_ids = splits.fold_members()[args.fold]
-    elif not apps.is_available():
-        raise InvalidInput("dataset assets are missing: run `make fetch` first")
+        if args.fold == splits.DEV_H_FOLD:
+            _consume_dev_h_touch(args, guard)
 
     result = ladder.run_rung(args.system, query_ids=query_ids, limit=args.limit)
-    run_id = ladder.record(result, extra={"fold": args.fold})
+    run_id = ladder.record(result, fold=args.fold if args.fold >= 0 else None, extra={"fold": args.fold})
     print(f"rung={result.rung} queries={result.n_queries} docs={result.n_docs} seconds={result.seconds:.1f}")
     print(f"ndcg@10={result.metrics['ndcg_at_10']:.4f}  mrr@10={result.metrics['mrr_at_10']:.4f}  ")
     print(f"recall@100={result.metrics['recall_at_100']:.4f}  ledger={run_id}")
@@ -174,6 +200,14 @@ def _eval_ladder(args: argparse.Namespace) -> int:
     return 0
 
 
+def _eval_parity(args: argparse.Namespace) -> int:
+    from acis.eval import ladder
+
+    report = ladder.run_parity(limit=args.limit, top_k=args.top_k)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["parity_top10_identical"] >= 0.95 else 1
+
+
 def _eval_gate(args: argparse.Namespace) -> int:
     print(
         f"gate {args.gate}: the gate procedures are declared in configs/gates/ and run from Phase 2 onwards "
@@ -195,10 +229,20 @@ def _eval_robustness(args: argparse.Namespace) -> int:
 def _eval_official(args: argparse.Namespace) -> int:
     from acis.eval.official import run_official
 
-    result = run_official(rc=args.rc, mode=args.mode, config_path=args.config, out=args.out or None, cold=args.cold)
-    print(f"{result.rc} mode={result.mode} ndcg@10={result.metrics.get('ndcg_at_10', float('nan')):.4f}")
-    print(f"evaluation_time={result.evaluation_time:.1f}s  run_dir={result.run_dir}  ledger={result.run_id}")
-    return 0
+    result = run_official(
+        rc=args.rc,
+        mode=args.mode,
+        config_path=args.config,
+        out=args.out or None,
+        cold=args.cold,
+        cache_verify=args.cache_verify,  # a cache verification books no held-out touch
+    )
+    ndcg = result.metrics.get("ndcg_at_10", float("nan"))
+    print(f"{result.rc} mode={result.mode} primary={result.primary_mode} ndcg@10={ndcg:.4f}")
+    print(f"evaluation_time={result.evaluation_time:.1f}s (per mode: {dict(result.per_mode_seconds)})")
+    print(f"run_dir={result.run_dir}  ledger={result.run_id or '(cache-verify: no ledger row)'}")
+    print(f"verify-submission: {'PASS' if result.verified else 'FAIL — read verify_report.txt'}")
+    return 0 if result.verified else 1
 
 
 def _eval_verify_submission(args: argparse.Namespace) -> int:

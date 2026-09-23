@@ -168,3 +168,43 @@ def test_a_structured_log_line_is_json(capsys, monkeypatch):
     line = capsys.readouterr().err.strip().splitlines()[-1]
     payload = json.loads(line)
     assert payload["event"] == "unit_event" and payload["snapshot_id"] == "s_1"
+
+
+# -- INV-11: the engine knows nothing about mteb -------------------------------------------------------------------
+ENGINE_SIDE = ("engine", "core", "embed", "rank", "prep", "lexical")
+
+
+@pytest.mark.parametrize("package", ENGINE_SIDE)
+def test_the_engine_never_imports_mteb(package):
+    """INV-11: the adapter translates; the engine must not know the harness exists.
+
+    Checked on import statements only — a docstring mentioning mteb is documentation, not a dependency.
+    """
+    offenders: list[str] = []
+    for path in (SRC / package).rglob("*.py"):
+        for lineno, line in _code_lines(path):
+            if re.match(r"\s*(import\s+mteb|from\s+mteb[\s.])", line):
+                offenders.append(f"{path.relative_to(SRC)}:{lineno}")
+    assert not offenders, f"{package} imports mteb (INV-11): {offenders}"
+
+
+def test_the_engine_package_imports_cleanly_without_mteb_loaded():
+    """A stronger form of INV-11: importing the engine must not pull mteb in transitively."""
+    import json
+    import subprocess
+    import sys
+
+    code = (
+        "import json, sys\n"
+        "import acis.engine\n"
+        "print(json.dumps([m for m in sys.modules if m.split('.')[0] == 'mteb']))\n"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
+    assert json.loads(out) == []
+
+
+def test_the_robustness_fixture_meets_its_declared_minimum():
+    """docs/spec/10 §8: a corpus below ~200 documents cannot expose a template-coupled ranking flip."""
+    from acis import robust_hook
+
+    assert robust_hook.corpus_size() >= robust_hook.MIN_DOCS

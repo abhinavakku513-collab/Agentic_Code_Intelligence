@@ -70,12 +70,25 @@ def test_no_held_out_label_file_inside_acis_home():
 
 
 def test_no_held_out_label_file_inside_the_working_tree():
+    """Checked on the full relative path, not just the basename, so a nested cache cannot hide one."""
+    skip = (".git/", ".venv/", ".mypy_cache/", ".ruff_cache/", ".pytest_cache/")
     leaks = [
         p.relative_to(acis_root()).as_posix()
         for p in acis_root().rglob("*")
-        if p.is_file() and ".git/" not in p.as_posix() and is_sealed_file(p.name)
+        if p.is_file()
+        and not any(part in p.as_posix() for part in skip)
+        and is_sealed_file(p.relative_to(acis_root()).as_posix())
     ]
     assert leaks == []
+
+
+def test_caches_live_outside_the_repository():
+    """CLAUDE.md §7: data, CAS and caches sit outside git — and third-party labels never sit next to ours."""
+    from acis.core.paths import acis_home, reg_home
+
+    root = acis_root().resolve()
+    assert not acis_home().resolve().is_relative_to(root)
+    assert not reg_home().resolve().is_relative_to(root)
 
 
 def test_assert_seal_fires_when_a_sealed_file_appears(tmp_path):
@@ -159,9 +172,22 @@ def test_official_run_refuses_without_the_sealed_hf_home(monkeypatch, tmp_path):
     from acis.core.config import freeze_config
     from acis.eval.official import assert_official_environment
 
-    monkeypatch.setenv("HF_HOME", str(tmp_path))
+    sealed = tmp_path / "sealed"
+    sealed.mkdir()
+    monkeypatch.setenv("ACIS_SEALED_HOME", str(sealed))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "somewhere-else"))
     with pytest.raises(SealedDataAccess, match="HF_HOME"):
         assert_official_environment(freeze_config({"run": {"strict": True}}))
+
+
+def test_a_machine_without_a_sealed_area_can_still_reproduce(monkeypatch, tmp_path):
+    """A judge has no sealed area: `make reproduce` must not be blocked by a seal that does not exist."""
+    from acis.core.config import freeze_config
+    from acis.eval.official import assert_official_environment
+
+    monkeypatch.setenv("ACIS_SEALED_HOME", str(tmp_path / "no-such-seal"))
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "ordinary-cache"))
+    assert_official_environment(freeze_config({"run": {"strict": True}}), ledgered=False)
 
 
 def test_official_run_requires_strict_and_cpu(monkeypatch):
@@ -171,6 +197,7 @@ def test_official_run_requires_strict_and_cpu(monkeypatch):
 
     # A sealed-looking HF_HOME, so the environment check passes and only the strict/device checks can fire.
     monkeypatch.setenv("HF_HOME", "/home/someone/.acis-sealed/hf")
+    monkeypatch.setenv("ACIS_ALLOW_DIRTY_RC", "1")
     with pytest.raises(StrictViolation, match="strict"):
         assert_official_environment(freeze_config({"run": {"strict": False}}))
     with pytest.raises(StrictViolation, match="CPU-only"):

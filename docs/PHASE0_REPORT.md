@@ -65,7 +65,7 @@ Decisions this settles:
 * **I-01 confirmed.** The corpus carries a `partition` column: 5,000 `train` and 3,765 `test` documents. The
   documents of both partitions are in one corpus, so unlabelled documents are distractors — and a filter that knew
   which was which would be exactly the forbidden train-doc detector (CLAUDE.md §4). The column is read by the audit
-  and by nothing else (`tests/unit/test_no_partition_leak.py`).
+  and by nothing else (`tests/integration/test_dev_harness.py::test_partition_metadata_does_not_leak_out_of_the_package`).
 * **Truncation defaults are safe.** p99 document length is 360 whitespace tokens and p99 query length 717, so the
   spec's 768+256 head/tail budget truncates almost nothing. The document maximum (10,017 tokens) is a long tail of a
   handful of files, not a material one — **E-LONG is not triggered** (spec 02 §5).

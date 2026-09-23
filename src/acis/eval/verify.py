@@ -82,6 +82,35 @@ def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _revision_from_predictions(run_dir: Path) -> str:
+    """The model revision mteb records alongside the rankings it saved (`predictions/*_predictions.json`)."""
+    folder = run_dir / "predictions"
+    if not folder.is_dir():
+        return ""
+    for path in sorted(folder.rglob("*predictions.json")):
+        try:
+            payload = _load_json(path)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, Mapping):
+            continue
+        meta = payload.get("model_meta") or payload.get("model") or {}
+        candidate = payload.get("model_revision") or (meta.get("revision") if isinstance(meta, Mapping) else None)
+        if candidate:
+            return str(candidate)
+    return ""
+
+
+def _ledger_touches_for(run_dir: Path) -> int | None:
+    """How many held-out touches the ledger booked for *this* run directory, or `None` if it has no row."""
+    target = str(run_dir.resolve())
+    for row in ledger.read_rows():
+        recorded = str(row.get("run_dir", ""))
+        if recorded and Path(recorded).resolve() == Path(target):
+            return int(row.get("test_touch_count", 0))
+    return None
+
+
 def _find_scores(result: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]] | None:
     """`scores` maps a split name to a list of per-subset score dicts; return the first one we find."""
     scores = result.get("scores") or {}
@@ -178,27 +207,48 @@ def verify_submission(run_dir: str | Path, *, qrels: Mapping[str, Mapping[str, i
     else:
         manifest = _load_json(manifest_path)
         report.add("run manifest present", PASS)
-        expectations = (
-            ("adapter_invocations", 1, "our search() ran exactly once"),
-            ("fallbacks", 0, "no degradation was recorded"),
-            ("agent_calls", 0, "INV-13"),
-        )
-        for key, want, why in expectations:
+        for key, want, why in (("fallbacks", 0, "no degradation was recorded"), ("agent_calls", 0, "INV-13")):
             got = manifest.get(key)
             report.add(f"manifest.{key} == {want}", PASS if got == want else FAIL, f"{got} ({why})")
         strict = manifest.get("strict")
         report.add("manifest.strict is true", PASS if strict is True else FAIL, str(strict))
+        # A harness dry run exercises this pipeline on a fixture task with a stand-in encoder. It is useful, and
+        # it must never be mistaken for a submission.
+        dry_run = bool(manifest.get("harness_dry_run", False))
+        report.add(
+            "not a harness dry run",
+            FAIL if dry_run else PASS,
+            "this run carries ACIS_HARNESS_DRY_RUN and is not a submission" if dry_run else "",
+        )
+
+        # "Our code ran" means different things per mode, and RC0 is Mode B (D8): in Mode A mteb uses our object
+        # directly, so `search()` must have run exactly once and `encode()` never; in Mode B mteb's own wrapper
+        # grades our embeddings, so `encode()` must have run and `search()` must not.
+        run_mode = str(manifest.get("mode", "A")).upper()
+        invocations, encodes = manifest.get("adapter_invocations"), manifest.get("encode_calls")
+        if run_mode == "A":
+            ok = invocations == 1 and encodes == 0
+            detail = f"Mode A: adapter_invocations={invocations} (want 1), encode_calls={encodes} (want 0)"
+        else:
+            ok = invocations == 0 and isinstance(encodes, int) and encodes > 0
+            detail = f"Mode B: encode_calls={encodes} (want > 0), adapter_invocations={invocations} (want 0)"
+        report.add("our code ran, on the dispatch path the mode requires", PASS if ok else FAIL, detail)
 
         if result is not None:
             model_revision = str(manifest.get("model_revision", ""))
             reported = str(result.get("model_revision") or result.get("revision") or "").strip()
+            source = "result JSON"
             if not reported:
-                report.add("model revision matches manifest", SKIP, "the result JSON records no model revision")
+                # `TaskResult.to_dict()` carries no model revision in mteb 2.21.0, but the predictions artifact
+                # does — so the check reads that instead of reporting SKIP on every real run.
+                reported, source = _revision_from_predictions(d), "predictions"
+            if not reported:
+                report.add("model revision matches manifest", SKIP, "neither the JSON nor the predictions record one")
             else:
                 report.add(
                     "model revision matches manifest",
                     PASS if reported == model_revision else FAIL,
-                    f"{reported} vs {model_revision}",
+                    f"{source}: {reported} vs manifest {model_revision}",
                 )
 
     # -- both modes -----------------------------------------------------------------------------------------
@@ -237,13 +287,16 @@ def verify_submission(run_dir: str | Path, *, qrels: Mapping[str, Mapping[str, i
     if manifest is not None and "test_touch_count" in manifest:
         declared = int(manifest["test_touch_count"])
         used = ledger.test_touches_used()
-        report.add(
-            "held-out touches agree with the ledger",
-            PASS if declared <= used else FAIL,
-            f"manifest {declared}, ledger total {used} (budget {ledger.TEST_TOUCH_BUDGET})",
+        recorded = _ledger_touches_for(d)
+        detail = (
+            f"manifest {declared}, this run's ledger row {recorded}, ledger total {used}/{ledger.TEST_TOUCH_BUDGET}"
         )
+        # The run must have booked exactly what it spent, and the total must stay inside the budget. Comparing
+        # `declared <= used` would let a manifest claiming zero pass against a ledger that has spent everything.
+        ok = recorded is not None and recorded == declared and used <= ledger.TEST_TOUCH_BUDGET
+        report.add("held-out touches agree with the ledger", PASS if ok else FAIL, detail)
     else:
-        report.add("held-out touches agree with the ledger", SKIP, "the manifest declares no touch count")
+        report.add("held-out touches agree with the ledger", FAIL, "the manifest declares no touch count")
 
     # -- checksums -----------------------------------------------------------------------------------------
     problems = verify_checksums(d)

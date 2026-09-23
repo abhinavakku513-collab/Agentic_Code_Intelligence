@@ -80,6 +80,27 @@ def main() -> int:
         "note": "harness validation with the model-free stand-in encoder; not an accuracy claim",
         "reg_cache": str(cache),
     }
+    # INV-14: a number about our system exists only if a ledger row backs it.
+    from acis.eval import ledger
+
+    run_id = ledger.append(
+        ledger.LedgerRowBuilder(kind="audit")
+        .with_metrics({"ndcg_at_10": report["ndcg_at_10"], "mrr_at_10": report["mrr_at_10"]})
+        .with_fields(
+            rung=f"reg:{args.task}",
+            dataset=report["dataset"],
+            decision_set=f"reg_{args.task.lower()}",
+            mode=args.mode,
+            dispatch=report["dispatch"],
+            encode_calls=report["encode_calls"],
+            adapter_invocations=report["adapter_invocations"],
+            seconds=report["evaluation_time_s"],
+            notes=report["note"],
+        )
+        .build()
+    ).run_id
+    report["ledger"] = run_id
+
     text = json.dumps(report, indent=2, sort_keys=True)
     print(text)
     if args.out:

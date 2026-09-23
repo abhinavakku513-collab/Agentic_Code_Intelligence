@@ -154,21 +154,40 @@ def assert_seal(root: Path | None = None) -> None:
         )
 
 
+def sealed_hub_cache() -> Path:
+    """Where the official run's `HF_HOME` resolves its hub cache.
+
+    `make rc-official` exports `HF_HOME=<sealed>/hf`, and huggingface_hub then reads `HF_HOME/hub`. Downloading
+    with `cache_dir=<sealed>/hf` would put the files one level above where the offline run looks for them, so the
+    official pass would fail to find the dataset it is supposed to be graded on.
+    """
+    return sealed_root() / "hf" / "hub"
+
+
 def fetch_sealed(pin: DatasetPin = APPS) -> list[FetchedAsset]:
-    """OWNER ONLY. Download the held-out labels into `~/.acis-sealed/hf` (never into `ACIS_HOME`)."""
+    """OWNER ONLY. Populate the sealed HF cache so the official run can load the task offline.
+
+    It fetches the held-out labels **and** the corpus and queries: `mteb.get_task(...).load_data()` needs all
+    three, and with `HF_HUB_OFFLINE=1` it can only read what is already in that one cache.
+    """
     if os.environ.get(SEALED_OPT_IN) != "1":
         raise SealedDataAccess(
             f"refusing to fetch held-out labels without an explicit opt-in; the owner runs "
             f"`{SEALED_OPT_IN}=1 uv run acis fetch --sealed` in their own terminal (D19)"
         )
-    files = [f for f in list_repo_files(pin) if is_sealed_file(f)]
-    if not files:
+    listing = list_repo_files(pin)
+    sealed_files = [f for f in listing if is_sealed_file(f)]
+    if not sealed_files:
         raise InvalidInput("no sealed files found at the pinned revision", repo=pin.repo)
+    # The non-label assets the task also needs. They are duplicated here on purpose: the sealed cache has to be
+    # self-sufficient, because the official run is offline and points at nothing else.
+    support_files = [f for f in listing if is_dev_allowed(f)]
+
     hub = _hub(online=True)
-    target = sealed_root() / "hf"
+    target = sealed_hub_cache()
     target.mkdir(parents=True, exist_ok=True)
     assets: list[FetchedAsset] = []
-    for name in files:
+    for name in [*sealed_files, *support_files]:
         local = hub.hf_hub_download(
             repo_id=pin.repo, filename=name, repo_type="dataset", revision=pin.revision, cache_dir=str(target)
         )
@@ -216,6 +235,7 @@ __all__ = [
     "local_assets_matching",
     "manifest_path",
     "scan_for_sealed",
+    "sealed_hub_cache",
     "verify_manifest",
     "write_manifest",
 ]

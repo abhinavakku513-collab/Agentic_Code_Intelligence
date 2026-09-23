@@ -21,9 +21,14 @@ def acis_root() -> Path:
 
 
 def acis_home() -> Path:
-    """Mutable data root (outside git): data, CAS, caches. `$ACIS_HOME`, else `<root>/.acis-home`."""
+    """Mutable data root: dataset assets, CAS, caches. `$ACIS_HOME`, else `~/.acis/home`.
+
+    Deliberately **outside the repository** (CLAUDE.md §7): worktrees share one copy instead of each carrying
+    gigabytes, and a cache inside the tree would keep tripping the working-tree seal check for files that are not
+    ours to begin with.
+    """
     env = os.environ.get("ACIS_HOME")
-    home = Path(env).resolve() if env else acis_root() / ".acis-home"
+    home = Path(env).resolve() if env else Path.home() / ".acis" / "home"
     home.mkdir(parents=True, exist_ok=True)
     return home
 
@@ -49,7 +54,7 @@ def reg_home() -> Path:
     `ACIS_HOME` holds only the allow-listed APPS assets.
     """
     env = os.environ.get("ACIS_REG_HOME")
-    home = Path(env).resolve() if env else acis_root() / ".acis-reg"
+    home = Path(env).resolve() if env else Path.home() / ".acis" / "reg"
     home.mkdir(parents=True, exist_ok=True)
     return home
 

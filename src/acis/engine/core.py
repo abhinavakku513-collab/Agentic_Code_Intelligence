@@ -410,7 +410,9 @@ class AcisEngine:
                 score=float(score),
                 unit=data.unit_of(doc_id),
                 source=data.text_of(doc_id),  # INV-1: re-read by hash
-                signals={"channel_score": float(score), "corpus_ordinal": float(data.ordinal[doc_id])},
+                # Never publish the corpus ordinal: on this corpus `ordinal < 5000` is an exact train-partition
+                # detector, and a Phase 4 feature builder reading `hit.signals` would learn it (CLAUDE.md §4).
+                signals={"channel_score": float(score)},
             )
             for rank, (doc_id, score) in enumerate(ranked, start=1)
         ]
