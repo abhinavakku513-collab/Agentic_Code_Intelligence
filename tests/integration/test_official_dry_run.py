@@ -343,3 +343,32 @@ def test_a_dirty_tree_is_refused_for_a_ledgered_run(tmp_path, monkeypatch, offic
     with pytest.raises(StrictViolation, match="uncommitted"):
         official.assert_official_environment(config, ledgered=True, touches=1)
     official.assert_official_environment(config, ledgered=False)  # a reproduction is unaffected
+
+
+# -- the rebuildability precondition ------------------------------------------------------------------------
+def test_appending_one_row_does_not_block_the_next(tmp_path, monkeypatch):
+    """An A+B release candidate writes two rows. Writing the first must not make the second impossible.
+
+    The rule exists so a gate row's `git_sha` rebuilds the number it quotes — a claim about the *code*. The
+    ledger is the evidence it produces, so the act of recording cannot be what fails the check.
+    """
+    from acis.eval.official import DIRTY_EXEMPT, _working_tree_is_dirty
+
+    assert "runs/ledger.jsonl" in DIRTY_EXEMPT
+
+    calls = {"n": 0}
+
+    class FakeRun:
+        returncode = 0
+        stdout = " M runs/ledger.jsonl\n"
+
+    def fake_run(*args, **kwargs):
+        calls["n"] += 1
+        return FakeRun()
+
+    monkeypatch.delenv("ACIS_ALLOW_DIRTY_RC", raising=False)  # the override would mask both assertions below
+    monkeypatch.setattr("subprocess.run", fake_run)
+    assert not _working_tree_is_dirty()
+
+    FakeRun.stdout = " M runs/ledger.jsonl\n M src/acis/engine/core.py\n"
+    assert _working_tree_is_dirty(), "an actual source change must still fail the check"

@@ -133,6 +133,13 @@ def assert_official_environment(config: FrozenConfig, *, ledgered: bool = True, 
         )
 
 
+#: The ledger is the one tracked file a run is *expected* to modify — appending a row is what recording is. A
+#: run that wrote its own first row would otherwise find the tree dirty and refuse to write its second, which is
+#: exactly what an A+B release candidate does. The rule is about the *code* being rebuildable from `git_sha`, and
+#: the ledger is evidence, not code.
+DIRTY_EXEMPT = ("runs/ledger.jsonl",)
+
+
 def _working_tree_is_dirty() -> bool:
     import subprocess  # noqa: PLC0415
 
@@ -146,7 +153,10 @@ def _working_tree_is_dirty() -> bool:
         return True  # fail closed: a precondition about rebuildability may not pass because git did not answer
     if out.returncode != 0:
         return True
-    return bool(out.stdout.strip())
+    changed = [
+        line[3:].strip() for line in out.stdout.splitlines() if line.strip() and line[3:].strip() not in DIRTY_EXEMPT
+    ]
+    return bool(changed)
 
 
 # -- one mode ----------------------------------------------------------------------------------------------------
