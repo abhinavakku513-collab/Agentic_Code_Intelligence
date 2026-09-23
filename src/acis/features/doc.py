@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 import re
+import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -225,7 +226,11 @@ def extract(text: str) -> DocFeatures:
     n_lines = source.count("\n") + 1
     n_tokens = len(source.split())
     try:
-        tree = ast.parse(source)
+        # A corpus of other people's code is full of `SyntaxWarning` — invalid escapes, mostly. They are true
+        # observations about the file and irrelevant to us: we are reading its shape, not running it.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            tree = ast.parse(source)
     except (SyntaxError, ValueError, MemoryError, RecursionError):
         return _tolerant(source, n_lines=n_lines, n_tokens=n_tokens)
 
