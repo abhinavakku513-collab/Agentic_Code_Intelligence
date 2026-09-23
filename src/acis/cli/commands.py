@@ -236,6 +236,8 @@ def _eval_official(args: argparse.Namespace) -> int:
         out=args.out or None,
         cold=args.cold,
         cache_verify=args.cache_verify,  # a cache verification books no held-out touch
+        reproduce=args.reproduce,  # nor does a judge's reproduction
+        force=args.force,
     )
     ndcg = result.metrics.get("ndcg_at_10", float("nan"))
     print(f"{result.rc} mode={result.mode} primary={result.primary_mode} ndcg@10={ndcg:.4f}")

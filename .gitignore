@@ -18,6 +18,6 @@ dist/
 .DS_Store
 *.parquet
 *.safetensors
+# ACIS caches default to ~/.acis/ (outside git, CLAUDE.md §7); these remain for an explicit override.
 .acis-home/
-.acis-reg/
 .acis-reg/

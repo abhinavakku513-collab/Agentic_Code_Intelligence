@@ -56,18 +56,17 @@ def test_a_document_quoted_as_its_own_query_ranks_first(hook, corpus):
 
 
 def test_a_distinctive_fragment_retrieves_its_document(hook, corpus):
-    """A partial quote is a realistic query shape and must still find the document it came from."""
+    """A partial quote is a realistic query shape and must still find the document it came from.
+
+    A majority of eligible documents, not one of them: "at least one in ten" would pass with nine failures.
+    """
     search, _ = hook
-    found_in_top_k = 0
-    candidates = _sample(corpus, 10)
-    for doc in candidates:
-        words = doc.text.split()
-        if len(words) < 40:
-            continue
-        fragment = " ".join(words[10:40])
-        if doc.handle in search(fragment, top_k=K):
-            found_in_top_k += 1
-    assert found_in_top_k >= 1, "no distinctive fragment retrieved its own document"
+    eligible = [doc for doc in _sample(corpus, 10) if len(doc.text.split()) >= 40]
+    if not eligible:
+        pytest.skip("no sampled document is long enough to take a 30-word fragment from")
+    hits = [doc for doc in eligible if doc.handle in search(" ".join(doc.text.split()[10:40]), top_k=K)]
+    ratio = len(hits) / len(eligible)
+    assert ratio >= 0.6, f"only {len(hits)}/{len(eligible)} fragments retrieved their own document"
 
 
 def test_different_queries_produce_different_rankings(hook, corpus):
@@ -77,13 +76,16 @@ def test_different_queries_produce_different_rankings(hook, corpus):
     assert len(set(rankings)) > 1, "every query returned the same ranking — the engine is not discriminating"
 
 
-def test_a_constant_engine_passes_invariance_and_fails_discrimination(corpus):
+def test_a_constant_engine_passes_the_real_invariance_suite_and_fails_this_one(corpus):
     """The reason this module exists, stated as an executable claim.
 
-    A degenerate engine that ignores its query satisfies determinism, format-noise invariance and every overlap
-    threshold in `test_query_agnostic.py` — and fails the checks above. Invariance alone is therefore not evidence
-    that the engine is query-agnostic in the useful sense; the two halves have to be read together.
+    The *actual* property functions from `test_query_agnostic.py` are run against a degenerate engine that ignores
+    its query. They all pass. The discrimination checks above all fail. Invariance alone is therefore not evidence
+    that the engine is query-agnostic in any useful sense — the two halves have to be read together.
     """
+    import perturb  # noqa: PLC0415
+    import test_query_agnostic as invariance  # noqa: PLC0415
+
     constant = [doc.handle for doc in corpus[:K]]
 
     def constant_engine(query: str, top_k: int = K) -> list[str]:
@@ -91,20 +93,16 @@ def test_a_constant_engine_passes_invariance_and_fails_discrimination(corpus):
             raise ValueError("InvalidInput: query is empty")
         return constant[:top_k]
 
-    import sys
-    from pathlib import Path
+    # The invariance suite accepts it — these are its own assertions, not re-implementations.
+    invariance.test_determinism(constant_engine)
+    invariance.test_format_noise_is_a_strict_no_op(constant_engine)
+    for name in ("strip_headings", "lower"):
+        invariance.test_mild_structure_changes_keep_topk(constant_engine, name)
+    for name in perturb.MODERATE:
+        invariance.test_moderate_perturbations_degrade_gracefully(constant_engine, name)
 
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import perturb  # noqa: PLC0415
-
-    probe = corpus[0].text
-    # invariance: every property the other suite checks holds trivially
-    assert constant_engine(probe) == constant_engine(probe)
-    assert constant_engine(perturb.format_noise(probe, 0)) == constant_engine(probe)
-    for op in perturb.MODERATE.values():
-        assert constant_engine(op(probe, seed=0)) == constant_engine(probe)
-
-    # discrimination: both checks above reject it
+    # This suite rejects it.
     sampled = _sample(corpus)
-    assert len({tuple(constant_engine(d.text)) for d in sampled}) == 1
+    with pytest.raises(AssertionError):
+        test_different_queries_produce_different_rankings((constant_engine, None), corpus)
     assert any(constant_engine(d.text)[:1] != [d.handle] for d in sampled)

@@ -71,11 +71,14 @@ def isolated_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _task_factory(name: str) -> Any:
-    counter = {"n": 0}
+    """**One** task name for both modes, exactly as the real run has.
+
+    Handing each mode its own name would hide the defect this fixture is meant to expose: mteb names the
+    predictions file after the task, so two modes writing into one folder overwrite each other.
+    """
 
     def make() -> Any:
-        counter["n"] += 1
-        return make_toy_task(f"{name}{counter['n']}")
+        return make_toy_task(name)
 
     return make
 
@@ -147,6 +150,20 @@ def test_mode_a_manifest_records_our_search_running_once(tmp_path, official_conf
 
 
 @pytest.mark.slow
+def test_each_mode_keeps_its_own_predictions(tmp_path, official_config, isolated_ledger):
+    """mteb names the predictions file after the task, so an A+B run writing into one folder loses a mode.
+
+    At RC1 with primary A, a judge re-scoring `predictions/` would otherwise get Mode B's rankings against a
+    Mode A results JSON.
+    """
+    result = run(tmp_path, official_config, "AB")
+    for mode in ("A", "B"):
+        folder = result.run_dir / "predictions" / mode
+        assert folder.is_dir(), f"mode {mode} has no predictions folder"
+        assert list(folder.rglob("*predictions.json")), f"mode {mode} wrote no predictions"
+
+
+@pytest.mark.slow
 def test_an_ab_run_books_one_held_out_touch_per_mode(tmp_path, official_config, isolated_ledger):
     """CLAUDE.md §4 budgets RC1 as two touches (A+B); booking one would under-report the budget."""
     result = run(tmp_path, official_config, "AB")
@@ -184,7 +201,7 @@ def test_verification_runs_on_the_produced_directory(tmp_path, official_config, 
     statuses = {c.name: c.status for c in report.checks}
     assert statuses["run manifest present"] == "PASS"
     assert statuses["our code ran, on the dispatch path the mode requires"] == "PASS"
-    assert statuses["both mode JSONs present"] == "PASS"
+    assert statuses["the JSONs match the modes that ran"] == "PASS"
     assert statuses["checksums valid"] == "PASS", report.render()
     assert statuses["held-out touches agree with the ledger"] == "PASS", report.render()
     # The toy task is not AppsRetrieval, so the pinned-revision check is expected to fail here.

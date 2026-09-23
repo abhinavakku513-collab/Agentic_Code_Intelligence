@@ -33,18 +33,26 @@ DEV_ALLOWLIST: tuple[str, ...] = (
     f"data/{DEV_SPLIT}-*.parquet",
     "README.md",
 )
-#: Patterns matched against a repository-relative name **and** against any suffix of a longer path, because the
-#: same file appears in three shapes: as a repository entry (`data/<split>-00000-of-00001.parquet`), inside an HF
-#: cache (`datasets--CoIR-Retrieval--apps/snapshots/<sha>/data/<split>-00000-of-00001.parquet`), and as a bare
-#: basename if someone copies it out. A detector that only recognises the first shape is blind exactly where a
-#: real leak would land.
-SEALED_PATTERNS: tuple[str, ...] = (
-    f"data/{SEALED_SPLIT}-*.parquet",
-    f"qrels/{SEALED_SPLIT}-*.parquet",
-    f"{SEALED_SPLIT}-*-of-*.parquet",
-    f"*qrels*{SEALED_SPLIT}*",
-    f"*{SEALED_SPLIT}*qrels*",
+#: The held-out label file appears in three shapes: as a repository entry
+#: (`data/<split>-00000-of-00001.parquet`), inside an HF cache
+#: (`datasets--CoIR-Retrieval--apps/snapshots/<sha>/data/<split>-...parquet`), and as a bare basename if someone
+#: copies it out. Detection therefore works on path **components**: a basename that is unmistakably a label file,
+#: or a split-named shard sitting directly inside a `data/`- or `qrels/`-style directory.
+#: Basenames that are a label file wherever they sit.
+SEALED_BASENAMES: tuple[str, ...] = (
+    f"*qrels*{SEALED_SPLIT}*.parquet",
+    f"*{SEALED_SPLIT}*qrels*.parquet",
+    f"*qrels*{SEALED_SPLIT}*.tsv",
+    f"*{SEALED_SPLIT}*qrels*.tsv",
+    f"*qrels*{SEALED_SPLIT}*.jsonl",
+    f"*{SEALED_SPLIT}*qrels*.jsonl",
+    f"{SEALED_SPLIT}-labels*.parquet",
 )
+#: Directory names whose split-named shards are labels rather than documents.
+SEALED_PARENTS: frozenset[str] = frozenset({"data", "qrels"})
+SEALED_IN_PARENT: tuple[str, ...] = (f"{SEALED_SPLIT}-*.parquet", f"{SEALED_SPLIT}.parquet", f"{SEALED_SPLIT}.tsv")
+#: Kept for the repository-listing filter, which only ever sees repo-relative names.
+SEALED_PATTERNS: tuple[str, ...] = (f"data/{SEALED_SPLIT}-*.parquet", *SEALED_BASENAMES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,10 +72,18 @@ def is_sealed_file(name: str) -> bool:
     deeply nested HF-cache blob, or as a bare basename someone copied out. Prevention (the fetch allow-list) and
     detection (`assert_seal`) both rely on this, and detection is the half that sees paths we did not construct.
     """
-    lowered = name.replace("\\", "/").lower().lstrip("/")
-    parts = lowered.split("/")
-    candidates = ["/".join(parts[i:]) for i in range(len(parts))]
-    return any(fnmatch.fnmatch(candidate, pattern.lower()) for candidate in candidates for pattern in SEALED_PATTERNS)
+    parts = [p for p in name.replace("\\", "/").lower().lstrip("/").split("/") if p]
+    if not parts:
+        return False
+    basename = parts[-1]
+    parent = parts[-2] if len(parts) > 1 else ""
+
+    # Matched on path *components*, not on arbitrary string suffixes. `fnmatch`'s `*` crosses `/`, so suffix
+    # matching made `tests/unit/test_qrels.py` and `runs/qrels/latest/test.json` look like held-out labels — and
+    # the pressure from a false positive is always to weaken the pattern, which is the opposite of the point.
+    if any(fnmatch.fnmatch(basename, p.lower()) for p in SEALED_BASENAMES):
+        return True
+    return parent in SEALED_PARENTS and any(fnmatch.fnmatch(basename, p.lower()) for p in SEALED_IN_PARENT)
 
 
 def is_dev_allowed(name: str) -> bool:

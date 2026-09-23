@@ -100,22 +100,33 @@ def assert_ids_not_features(feature_names: Iterable[str]) -> None:
     training-partition documents and 5,000–8,764 exactly the held-out ones, so `ordinal < 5000` *is* the
     train-document detector CLAUDE.md §4 forbids, with no error at all.
     """
-    banned = (
-        "query_id",
-        "qid",
-        "doc_id",
-        "docid",
-        "corpus_id",
-        "external_id",
-        "ordinal",
-        "partition",
-        "corpus_order",
-        "position",
-        "row_index",
+    # Substring matching would reject legitimate Phase 4 features: `first_match_position` and
+    # `term_position_variance` are *within-document* positions and have nothing to do with the corpus ordinal.
+    # Identity names are matched as whole names; the positional hazards are matched as exact feature names.
+    banned_names = frozenset(
+        {
+            "query_id",
+            "qid",
+            "doc_id",
+            "docid",
+            "corpus_id",
+            "corpusid",
+            "external_id",
+            "corpus_ordinal",
+            "corpus_order",
+            "corpus_position",
+            "corpus_index",
+            "ordinal",
+            "partition",
+            "row_index",
+        }
     )
-    hits = sorted({n for n in feature_names if any(b in str(n).lower() for b in banned)})
+    banned_tokens = frozenset({"qid", "docid"})
+    hits = sorted(
+        {n for n in feature_names if str(n).lower() in banned_names or (set(str(n).lower().split("_")) & banned_tokens)}
+    )
     if hits:
-        raise SealedDataAccess("external ids may never be features (INV-4)", features=hits)
+        raise SealedDataAccess("external ids and corpus position may never be features (INV-4)", features=hits)
 
 
 # -- DEV-H touch counter -------------------------------------------------------------------------------------------
@@ -145,9 +156,21 @@ def dev_h_touches_for(milestone: str) -> int:
 
 
 def official_run_env_ok() -> tuple[bool, str]:
-    """The official run is the only process pointed at the sealed HF cache (docs/spec/09 §3)."""
+    """The official run is the only process pointed at the sealed HF cache (docs/spec/09 §3).
+
+    Compared as a path under `sealed_root()`, not as a substring of the directory name. The substring test refused
+    a correctly configured owner who had moved the seal with `ACIS_SEALED_HOME`, and accepted any decoy directory
+    whose name happened to contain those characters.
+    """
+    from acis.core.paths import sealed_root  # noqa: PLC0415
+
     home = os.environ.get("HF_HOME", "")
-    return (".acis-sealed" in home, home)
+    if not home:
+        return False, ""
+    try:
+        return Path(home).resolve().is_relative_to(sealed_root().resolve()), home
+    except (OSError, ValueError):
+        return False, home
 
 
 __all__ = [

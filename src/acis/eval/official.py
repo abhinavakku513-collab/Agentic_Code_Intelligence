@@ -40,7 +40,7 @@ from acis.eval import ledger
 from acis.eval.guard import official_run_env_ok
 from acis.eval.runfile import write_run
 from acis.eval.verify import MANIFEST_JSON, MODE_A_JSON, MODE_B_JSON, RESULT_JSON, verify_submission, write_checksums
-from acis.mteb_adapter import CONFIG_ENV, MODE_ENV, RUN_DIR_ENV, TOUCH_ENV, write_official_json
+from acis.mteb_adapter import CONFIG_ENV, DRY_RUN_ENV, MODE_ENV, RUN_DIR_ENV, TOUCH_ENV, write_official_json
 from acis.mteb_meta import revision_for
 
 BATCH_SIZE = 64
@@ -83,23 +83,45 @@ def assert_official_environment(config: FrozenConfig, *, ledgered: bool = True, 
     has no sealed area and the labels come from an ordinary cache, so `make reproduce` works there — that path is a
     reproduction, not a ledgered release candidate.
     """
-    sealed_ok, hf_home = official_run_env_ok()
-    if sealed_root().exists() and not sealed_ok:
-        raise SealedDataAccess(
-            "this machine has a sealed area, so the official run must point HF_HOME at it "
-            "(`make rc-official` does); refusing to run",
-            hf_home=hf_home or "unset",
-        )
     if not config.strict:
         raise StrictViolation("the official run requires run.strict: true")
     if str(config.get("run.device", "cpu")) != "cpu":
         raise StrictViolation("the official run is CPU-only (D15)")
     if not ledgered:
         return
+
+    # From here the run is a ledgered release candidate, so the sealed area must exist *and* be the cache in use.
+    # Keying this on "does the seal happen to exist" instead would mean a typo in ACIS_SEALED_HOME, or an unmounted
+    # volume, silently removes the check while the row still records `dataset="held-out"`.
+    #
+    # A declared harness dry run is exempt from the *sealed-area* requirement only: it grades a fixture task and
+    # `verify-submission` fails any run carrying the flag, so it can never become a submission. Every other
+    # precondition below still applies, because the accounting is exactly what the dry run exists to exercise.
+    if os.environ.get(DRY_RUN_ENV) != "1":
+        sealed_ok, hf_home = official_run_env_ok()
+        if not sealed_root().exists():
+            raise SealedDataAccess(
+                "a release candidate needs the sealed area, and it does not exist on this machine "
+                "(the owner runs `acis fetch --sealed` once); refusing to run",
+                sealed_root=str(sealed_root()),
+            )
+        if not sealed_ok:
+            raise SealedDataAccess(
+                "a release candidate must point HF_HOME at the sealed area (`make rc-official` does); refusing",
+                hf_home=hf_home or "unset",
+                sealed_root=str(sealed_root()),
+            )
     if _working_tree_is_dirty():
         raise StrictViolation(
             "the working tree has uncommitted changes; a release candidate must be rebuildable from its git_sha "
             "(docs/spec/03 §6). Commit first, or set ACIS_ALLOW_DIRTY_RC=1 to override deliberately."
+        )
+    chain_problems = ledger.verify_chain()
+    if chain_problems:
+        raise InvalidInput(
+            "the ledger chain is broken; a release candidate may not be appended to it "
+            "(checked here, before the pass, so a broken chain never costs a held-out touch)",
+            problems=chain_problems[:3],
         )
     used = ledger.test_touches_used()
     if used + touches > ledger.TEST_TOUCH_BUDGET:
@@ -121,7 +143,9 @@ def _working_tree_is_dirty() -> bool:
             ["git", "status", "--porcelain"], cwd=acis_root(), capture_output=True, text=True, timeout=15
         )
     except (OSError, subprocess.SubprocessError):
-        return False
+        return True  # fail closed: a precondition about rebuildability may not pass because git did not answer
+    if out.returncode != 0:
+        return True
     return bool(out.stdout.strip())
 
 
@@ -140,12 +164,31 @@ def run_mode(
     the environment check validated `configs/official.yaml` while the model quietly ran on `configs/dev.yaml` —
     different strictness, different encoder, different config hash in the manifest.
     """
-    import mteb  # noqa: PLC0415
 
+    previous = {k: os.environ.get(k) for k in (MODE_ENV, CONFIG_ENV, RUN_DIR_ENV, TOUCH_ENV)}
     os.environ[MODE_ENV] = mode
     os.environ[CONFIG_ENV] = config_path
     os.environ[RUN_DIR_ENV] = str(run_dir)
     os.environ[TOUCH_ENV] = str(touches)
+    try:
+        return _run_mode_inner(config_path, mode, run_dir, touches=touches, task_factory=task_factory)
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _run_mode_inner(
+    config_path: str,
+    mode: str,
+    run_dir: Path,
+    *,
+    touches: int,
+    task_factory: Callable[[], Any] | None = None,
+) -> ModeResult:
+    import mteb  # noqa: PLC0415
 
     from acis.mteb_adapter import PrePostPipelineEncoder  # noqa: PLC0415 — after ACIS_MODE is set
 
@@ -159,7 +202,9 @@ def run_mode(
         encode_kwargs={"batch_size": BATCH_SIZE},
         cache=None,  # V-04: the default persistent cache can return a stale result
         overwrite_strategy="always",
-        prediction_folder=str(run_dir / PREDICTIONS_DIR),
+        # Per mode: mteb names the file after the task, so both modes of an A+B run would otherwise
+        # write the same file and the shipped predictions would contradict the shipped JSON.
+        prediction_folder=str(run_dir / PREDICTIONS_DIR / mode),
         show_progress_bar=False,
     )
     elapsed = time.perf_counter() - started
@@ -171,7 +216,7 @@ def run_mode(
         mode=mode,
         task_result=task_result,
         evaluation_time=elapsed,
-        run=_load_predictions(run_dir, task),
+        run=_load_predictions(run_dir / PREDICTIONS_DIR / mode, task),
         manifest=json.loads(Path(manifest_path).read_text(encoding="utf-8")),
     )
 
@@ -194,9 +239,8 @@ def _first_task_result(model_result: Any) -> Any:
     )
 
 
-def _load_predictions(run_dir: Path, task: Any) -> dict[str, dict[str, float]]:
+def _load_predictions(folder: Path, task: Any) -> dict[str, dict[str, float]]:
     """Read back the rankings mteb saved, so `run.trec` is the ranking that was actually graded."""
-    folder = run_dir / PREDICTIONS_DIR
     if not folder.is_dir():
         return {}
     name = str(getattr(task.metadata, "name", ""))
@@ -249,6 +293,24 @@ def primary_mode_for(config: FrozenConfig, modes: list[str]) -> str:
     return configured if configured in modes else modes[-1]
 
 
+def _prepare_run_dir(run_dir: Path, *, force: bool = False) -> None:
+    """Refuse to write a submission into a directory that already holds someone else's artifacts.
+
+    Re-running one mode into a directory that still holds a previous attempt leaves the other mode's JSON and
+    manifest behind, and `SHA256SUMS` would then checksum a mixture of two runs as one coherent submission.
+    """
+    if run_dir.exists() and any(run_dir.iterdir()):
+        if not force:
+            raise InvalidInput(
+                "the run directory is not empty; a submission must not mix artifacts from two runs "
+                "(use a fresh --out, or force=True to overwrite deliberately)",
+                run_dir=str(run_dir.resolve()),
+            )
+        for path in sorted(run_dir.rglob("*"), reverse=True):
+            path.rmdir() if path.is_dir() else path.unlink()
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+
 def run_pipeline(
     *,
     rc: str,
@@ -257,19 +319,24 @@ def run_pipeline(
     run_dir: Path,
     cold: bool = True,
     ledgered: bool = True,
+    force: bool = False,
     task_factory: Callable[[], Any] | None = None,
 ) -> OfficialRun:
     """Execute the run and write every artifact of docs/spec/03 §4."""
     config = load_frozen_config(config_path)
-    modes = ["A", "B"] if mode.upper() == "AB" else [mode.upper()]
-    assert_official_environment(config, ledgered=ledgered, touches=len(modes))
+    requested = ["A", "B"] if mode.upper() == "AB" else [mode.upper()]
+    touches = len(requested) if ledgered else 0
+    assert_official_environment(config, ledgered=ledgered, touches=touches)
 
-    run_dir.mkdir(parents=True, exist_ok=True)
-    primary = primary_mode_for(config, modes)
+    _prepare_run_dir(run_dir, force=force)
+    primary = primary_mode_for(config, requested)
+    # The primary mode runs **first**. Whichever mode runs second inherits a warm model, a warm datasets cache and
+    # a warm page cache, and the primary mode's time is the number that gets published (D17).
+    modes = sorted(requested, key=lambda m: m != primary)
 
     results: dict[str, ModeResult] = {}
     for m in modes:
-        results[m] = run_mode(config_path, m, run_dir, touches=len(modes), task_factory=task_factory)
+        results[m] = run_mode(config_path, m, run_dir, touches=touches, task_factory=task_factory)
         write_official_json(results[m].task_result, run_dir / (MODE_A_JSON if m == "A" else MODE_B_JSON))
 
     primary_result = results[primary]
@@ -298,7 +365,7 @@ def run_pipeline(
                 cold=cold,
                 evaluation_time=per_mode[primary],  # the primary mode's own cold time, never a sum (D17)
                 evaluation_time_per_mode=per_mode,
-                run_dir=str(run_dir),
+                run_dir=str(run_dir.resolve()),
                 # One held-out touch per mode: an A+B run spends two of the six (CLAUDE.md §4).
                 test_touch_count=len(modes),
             )
@@ -333,16 +400,30 @@ def run_official(
     out: str | None = None,
     cold: bool = True,
     cache_verify: bool = False,
+    reproduce: bool = False,
+    force: bool = False,
 ) -> OfficialRun:
-    """The owner-facing entry point. `cache_verify` reproduces rankings from shipped caches and books no touch."""
-    run_dir = Path(out) if out else default_run_dir("cache-verify" if cache_verify else rc)
+    """The owner-facing entry point.
+
+    Three paths, and only the first is a release candidate:
+
+    * **ledgered RC** (`make rc-official`) — books a held-out touch, demands the sealed cache, a clean tree and
+      room in the budget;
+    * **`cache_verify`** — reproduces rankings from shipped caches; books nothing;
+    * **`reproduce`** (`make reproduce`, the judge quick start) — a cold run on a judge's machine. It must book
+      nothing and enforce none of the RC preconditions, or the quick start would be refused the moment our own
+      touch budget ran out, or our working tree was dirty.
+    """
+    label = "cache-verify" if cache_verify else ("reproduce" if reproduce else rc)
+    run_dir = Path(out) if out else default_run_dir(label)
     return run_pipeline(
         rc=rc,
         mode=mode,
         config_path=config_path,
         run_dir=run_dir,
         cold=cold and not cache_verify,
-        ledgered=not cache_verify,
+        ledgered=not (cache_verify or reproduce),
+        force=force,
     )
 
 

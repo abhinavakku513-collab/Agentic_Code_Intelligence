@@ -56,6 +56,36 @@ def test_sealed_patterns_are_recognised(name):
     assert not is_dev_allowed(name)
 
 
+def test_detection_covers_every_shape_a_real_leak_would_take():
+    """The file appears as a repository entry, as an HF-cache blob and as a bare basename."""
+    for name in (
+        f"data/{SEALED_SPLIT}-00000-of-00001.parquet",
+        f"datasets--CoIR-Retrieval--apps/snapshots/f22508f/data/{SEALED_SPLIT}-00000-of-00001.parquet",
+        f"/home/u/.acis-sealed/hf/hub/datasets--CoIR-Retrieval--apps/snapshots/abc/data/{SEALED_SPLIT}-0.parquet",
+        f"qrels/{SEALED_SPLIT}-00000-of-00001.parquet",
+        f"apps_qrels_{SEALED_SPLIT}.tsv",
+        f"{SEALED_SPLIT}_qrels.jsonl",
+    ):
+        assert is_sealed_file(name), name
+
+
+def test_detection_does_not_fire_on_ordinary_repository_files():
+    """A false positive is not harmless: it breaks the working-tree check and invites weakening the pattern.
+
+    Matching arbitrary string suffixes made a source file named after the word `qrels` look like a label file.
+    """
+    for name in (
+        f"data/{DEV_SPLIT}-00000-of-00001.parquet",
+        "corpus/corpus-00000-of-00001.parquet",
+        "queries/queries-00000-of-00001.parquet",
+        "src/acis/eval/verify.py",
+        f"tests/unit/{SEALED_SPLIT}_qrels_loader.py",
+        f"runs/qrels/latest/{SEALED_SPLIT}.json",
+        f"runs/latest/{SEALED_SPLIT}-0-of-1.parquet",
+    ):
+        assert not is_sealed_file(name), name
+
+
 def test_sealed_always_beats_the_allow_list():
     """A file matching both lists must never be fetched — the seal is not a tie-break."""
     crafted = f"data/{DEV_SPLIT}-qrels-{SEALED_SPLIT}.parquet"
@@ -143,11 +173,19 @@ def test_assert_dev_pool_rejects_unknown_ids():
         guard.assert_dev_pool(["not-a-real-query-id"], context="unit test")
 
 
-@pytest.mark.parametrize("name", ["query_id", "qid", "doc_id", "corpus_id", "external_id_hash"])
-def test_ids_may_never_become_features(name):
-    """INV-4."""
+@pytest.mark.parametrize(
+    "name", ["query_id", "qid", "doc_id", "docid", "corpus_id", "external_id", "corpus_ordinal", "partition"]
+)
+def test_ids_and_corpus_position_may_never_become_features(name):
+    """INV-4, including corpus position: on this corpus `ordinal < 5000` is an exact train-partition detector."""
     with pytest.raises(SealedDataAccess, match="INV-4"):
         guard.assert_ids_not_features(["cos", name])
+
+
+@pytest.mark.parametrize("name", ["first_match_position", "term_position_variance", "doc_id_free_feature"])
+def test_legitimate_feature_names_are_not_rejected(name):
+    """Substring matching rejected within-document positions, which have nothing to do with the corpus ordinal."""
+    guard.assert_ids_not_features(["cos", "bm25", name])
 
 
 def test_feature_names_without_ids_are_accepted():

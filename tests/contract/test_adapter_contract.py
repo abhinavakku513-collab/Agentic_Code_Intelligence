@@ -317,13 +317,20 @@ def test_stale_cache_hazard_is_reproduced_then_defeated(monkeypatch, tmp_path):
     changed = cfg.with_overrides(**{"prep.query.max_tokens": 512})
     assert cache.get(make_model_meta(changed)) is None
 
-    # defence 2: the official script passes cache=None and overwrite_strategy="always"
+    # defence 2: the official script passes cache=None and overwrite_strategy="always".
+    # Checked against the whole module, and against *every* evaluate call in it, so moving the call into a helper
+    # cannot quietly drop the defence while the test keeps passing.
     import inspect
+    import re
 
     from acis.eval import official
 
-    source = inspect.getsource(official.run_mode)
-    assert "cache=None" in source and 'overwrite_strategy="always"' in source
+    source = inspect.getsource(official)
+    calls = re.findall(r"mteb\.evaluate\((.*?)\n    \)", source, re.DOTALL)
+    assert calls, "no mteb.evaluate call found in the official module"
+    for call in calls:
+        assert "cache=None" in call, call[:200]
+        assert 'overwrite_strategy="always"' in call, call[:200]
 
 
 # -- the JSON writer ----------------------------------------------------------------------------------------------------

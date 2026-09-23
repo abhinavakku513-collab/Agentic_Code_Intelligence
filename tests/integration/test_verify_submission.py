@@ -97,7 +97,7 @@ def test_a_well_formed_run_directory_passes(tmp_path, booked_ledger):
     report = verify_submission(directory, qrels=QRELS)
     assert report.passed, report.render()
     assert status_of(report, "run.trec re-scores to the JSON") == PASS
-    assert status_of(report, "both mode JSONs present") == PASS
+    assert status_of(report, "the JSONs match the modes that ran") == PASS
     assert status_of(report, "checksums valid") == PASS
 
 
@@ -173,12 +173,23 @@ def test_a_tampered_artifact_breaks_the_checksums(tmp_path):
     assert status_of(report, "checksums valid") == FAIL
 
 
-def test_a_missing_mode_json_fails(tmp_path):
-    directory = make_run_dir(tmp_path)
+def test_an_ab_run_missing_one_mode_json_fails(tmp_path):
+    directory = make_run_dir(tmp_path, mode="AB", encode_calls=1, adapter_invocations=0)
     (directory / MODE_B_JSON).unlink()
     write_checksums(directory)
     report = verify_submission(directory, qrels=QRELS)
-    assert status_of(report, "both mode JSONs present") == FAIL
+    assert status_of(report, "the JSONs match the modes that ran") == FAIL
+
+
+def test_a_single_mode_run_passes_with_only_its_own_json(tmp_path, booked_ledger):
+    """RC0 is a single Mode B run (D8). Demanding both JSONs would fail every RC0 by construction."""
+    directory = make_run_dir(tmp_path, mode="B", adapter_invocations=0, encode_calls=2)
+    (directory / MODE_A_JSON).unlink()
+    ledger.append({"kind": "rc", "test_touch_count": 0, "run_dir": str(directory)})
+    write_checksums(directory)
+    report = verify_submission(directory, qrels=QRELS)
+    assert status_of(report, "the JSONs match the modes that ran") == PASS
+    assert report.passed, report.render()
 
 
 def test_the_ledger_touch_count_must_match_this_runs_row(tmp_path, monkeypatch):

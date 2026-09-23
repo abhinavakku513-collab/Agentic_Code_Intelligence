@@ -62,13 +62,52 @@ def verify_official(run_dir: str | Path) -> Any:
     return verify_submission(run_dir, qrels=load_holdout_qrels())
 
 
+def smoke_test_offline_load() -> dict[str, Any]:
+    """OWNER, BEFORE RC DAY. Prove the sealed cache can load the task offline.
+
+    The official run is the one thing that cannot be debugged while it happens, and its very first step is a data
+    load that only succeeds if the sealed area holds a *datasets* cache rather than only hub blobs. Running this
+    once, after `acis fetch --sealed` and before `make rc-official`, converts that from a hope into a fact. It
+    reads the held-out labels, which is why it lives here.
+    """
+    _require_sealed_environment()
+    import os  # noqa: PLC0415
+
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
+    import mteb  # noqa: PLC0415
+
+    from acis.appsdata.sources import APPS  # noqa: PLC0415
+
+    task: Any = mteb.get_task(APPS.task)
+    task.load_data()
+    loaded: Any = task.dataset["default"]
+    split = next(iter(loaded))
+    data = loaded[split]
+    return {
+        "task": APPS.task,
+        "split": split,
+        "n_corpus": len(data["corpus"]),
+        "n_queries": len(data["queries"]),
+        "n_qrels": len(data["relevant_docs"]),
+        "offline": True,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     """`python -m acis.eval.final <run_dir>` — the ask-gated entry point in `.claude/settings.json`."""
     import argparse  # noqa: PLC0415
+    import json  # noqa: PLC0415
 
     parser = argparse.ArgumentParser(prog="acis.eval.final", description=__doc__)
-    parser.add_argument("run_dir")
+    parser.add_argument("run_dir", nargs="?", default="")
+    parser.add_argument("--smoke", action="store_true", help="prove the sealed cache loads the task offline")
     args = parser.parse_args(argv)
+    if args.smoke:
+        print(json.dumps(smoke_test_offline_load(), indent=2, sort_keys=True))
+        return 0
+    if not args.run_dir:
+        parser.error("a run directory is required unless --smoke is given")
     report = verify_official(args.run_dir)
     print(report.render())
     return 0 if report.passed else 1

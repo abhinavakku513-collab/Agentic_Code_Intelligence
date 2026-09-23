@@ -183,9 +183,13 @@ def top_k_overlap(a: Mapping[str, Mapping[str, float]], b: Mapping[str, Mapping[
     return total / len(shared)
 
 
+FULL_DEV_POOL = 5000
 DECISION_SET_ALL = "train_all_5000"
 DECISION_SET_DEV_H = "dev_h"
-GATE_ELIGIBLE_SETS = (DECISION_SET_ALL,)
+#: A gate may decide on all 5,000 dev queries (non-fit components) or on K-fold OOF over them
+#: (trained components, from Phase 3). Everything else — a fold, DEV-H, a smoke subset — may not.
+DECISION_SET_OOF = "oof_5fold_5000"
+GATE_ELIGIBLE_SETS = (DECISION_SET_ALL, DECISION_SET_OOF)
 
 
 def decision_set_of(n_queries: int, *, fold: int | None = None) -> str:
@@ -199,9 +203,6 @@ def decision_set_of(n_queries: int, *, fold: int | None = None) -> str:
     if fold is not None and fold >= 0:
         return DECISION_SET_DEV_H if fold == DEV_H_FOLD else f"fold_{fold}"
     return DECISION_SET_ALL if n_queries >= FULL_DEV_POOL else f"subset_{n_queries}"
-
-
-FULL_DEV_POOL = 5000
 
 
 def record(

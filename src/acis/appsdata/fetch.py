@@ -164,6 +164,47 @@ def sealed_hub_cache() -> Path:
     return sealed_root() / "hf" / "hub"
 
 
+def sealed_datasets_cache() -> Path:
+    """Where the official run's `HF_DATASETS_CACHE` points (`make rc-official` sets `<sealed>/hf/datasets`)."""
+    return sealed_root() / "hf" / "datasets"
+
+
+def warm_sealed_datasets_cache(pin: DatasetPin = APPS) -> list[str]:
+    """Materialise the **datasets** cache in the sealed tree, not just the hub cache.
+
+    mteb's retrieval loader does not use `hf_hub_download`: it calls `datasets.get_dataset_config_names()` and
+    `load_dataset()`. Under `HF_HUB_OFFLINE=1` those raise *before* consulting any cache, and the only offline
+    fallback reads `HF_DATASETS_CACHE` — never the hub cache. A sealed area holding only hub blobs therefore fails
+    at data loading, before a single vector is encoded, on the one run that matters.
+
+    Every config the repository advertises is materialised, because the loader asks for `corpus`, `queries` and
+    `default`/`qrels` separately (`retrieval_dataset_loaders.py`).
+
+    Known limitation: the offline fallback resolves "the latest cached version" and ignores the revision, so a
+    stale cache cannot be detected from inside the run. The revision is pinned at fetch time instead, and
+    `SEALED_MANIFEST.json` records the per-file checksums.
+    """
+    import datasets  # noqa: PLC0415
+
+    cache = sealed_datasets_cache()
+    cache.mkdir(parents=True, exist_ok=True)
+    previous = {k: os.environ.get(k) for k in ("HF_HOME", "HF_DATASETS_CACHE")}
+    os.environ["HF_HOME"] = str(sealed_root() / "hf")
+    os.environ["HF_DATASETS_CACHE"] = str(cache)
+    try:
+        configs = list(datasets.get_dataset_config_names(pin.repo, revision=pin.revision))
+        for config in configs:
+            datasets.load_dataset(pin.repo, config, revision=pin.revision)
+        log.info("fetch.sealed_datasets_cache", configs=configs, cache=str(cache))
+        return configs
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def fetch_sealed(pin: DatasetPin = APPS) -> list[FetchedAsset]:
     """OWNER ONLY. Populate the sealed HF cache so the official run can load the task offline.
 
@@ -196,6 +237,7 @@ def fetch_sealed(pin: DatasetPin = APPS) -> list[FetchedAsset]:
                 repo_file=name, local_path=str(local), sha256=sha256_file(local), n_bytes=Path(local).stat().st_size
             )
         )
+    warm_sealed_datasets_cache(pin)
     (sealed_root() / "SEALED_MANIFEST.json").write_text(
         json.dumps({"dataset": asdict(pin), "assets": [asdict(a) for a in assets]}, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -235,7 +277,9 @@ __all__ = [
     "local_assets_matching",
     "manifest_path",
     "scan_for_sealed",
+    "sealed_datasets_cache",
     "sealed_hub_cache",
     "verify_manifest",
+    "warm_sealed_datasets_cache",
     "write_manifest",
 ]

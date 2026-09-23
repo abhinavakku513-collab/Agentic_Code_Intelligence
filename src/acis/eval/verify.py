@@ -104,13 +104,25 @@ def _revision_from_predictions(run_dir: Path) -> str:
 
 
 def _ledger_touches_for(run_dir: Path) -> int | None:
-    """How many held-out touches the ledger booked for *this* run directory, or `None` if it has no row."""
-    target = str(run_dir.resolve())
+    """How many held-out touches the ledger booked for *this* run directory, or `None` if it has no row.
+
+    Paths resolve against the repository root rather than the current directory, so verifying a run from anywhere
+    else cannot turn a legitimate row into a miss. The **last** matching row wins: re-running into the same
+    `--out` should be judged by its latest attempt, not its first.
+    """
+    from acis.core.paths import acis_root  # noqa: PLC0415
+
+    def _resolve(value: str) -> Path:
+        path = Path(value)
+        return (path if path.is_absolute() else acis_root() / path).resolve()
+
+    target = _resolve(str(run_dir))
+    found: int | None = None
     for row in ledger.read_rows():
         recorded = str(row.get("run_dir", ""))
-        if recorded and Path(recorded).resolve() == Path(target):
-            return int(row.get("test_touch_count", 0))
-    return None
+        if recorded and _resolve(recorded) == target:
+            found = int(row.get("test_touch_count", 0))
+    return found
 
 
 def _find_scores(result: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]] | None:
@@ -141,6 +153,7 @@ def verify_checksums(run_dir: str | Path) -> list[str]:
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
+        # split once on the first separator: a file name may itself contain two consecutive spaces
         digest, _, name = line.partition("  ")
         target = d / name
         if not target.is_file():
@@ -254,13 +267,24 @@ def verify_submission(run_dir: str | Path, *, qrels: Mapping[str, Mapping[str, i
                 )
 
     # -- both modes -----------------------------------------------------------------------------------------
+    # RC0 is a single Mode B run (D8) and spends one touch, so "both JSONs must exist" would fail every RC0 by
+    # construction. The expectation comes from the run's own manifest instead.
     present = [name for name in (MODE_A_JSON, MODE_B_JSON) if (d / name).is_file()]
-    if len(present) == 2:
-        report.add("both mode JSONs present", PASS)
-    elif present:
-        report.add("both mode JSONs present", FAIL, f"only {present[0]}")
+    declared_mode = str((manifest or {}).get("mode", "")).upper()
+    if not declared_mode:
+        report.add("the JSONs match the modes that ran", SKIP, "the manifest declares no mode")
     else:
-        report.add("both mode JSONs present", SKIP, "single-mode run")
+        expected = (
+            {MODE_A_JSON, MODE_B_JSON}
+            if declared_mode == "AB"
+            else {MODE_A_JSON if declared_mode == "A" else MODE_B_JSON}
+        )
+        ok = expected <= set(present)
+        report.add(
+            "the JSONs match the modes that ran",
+            PASS if ok else FAIL,
+            f"mode {declared_mode}: expected {sorted(expected)}, found {sorted(present)}",
+        )
 
     # -- re-scoring (parity P3) ----------------------------------------------------------------------------
     trec_path = d / TREC_NAME
@@ -295,7 +319,10 @@ def verify_submission(run_dir: str | Path, *, qrels: Mapping[str, Mapping[str, i
         )
         # The run must have booked exactly what it spent, and the total must stay inside the budget. Comparing
         # `declared <= used` would let a manifest claiming zero pass against a ledger that has spent everything.
-        ok = recorded is not None and recorded == declared and used <= ledger.TEST_TOUCH_BUDGET
+        # A run that claims no touch and booked no row is consistent too — that is what a cache verification and
+        # a judge's reproduction look like.
+        within_budget = used <= ledger.TEST_TOUCH_BUDGET
+        ok = within_budget and (recorded == declared if recorded is not None else declared == 0)
         report.add("held-out touches agree with the ledger", PASS if ok else FAIL, detail)
     else:
         report.add("held-out touches agree with the ledger", FAIL, "the manifest declares no touch count")

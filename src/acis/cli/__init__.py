@@ -70,6 +70,12 @@ def _add_eval(sub: argparse._SubParsersAction) -> None:
         action="store_true",
         help="reproduce rankings from shipped caches: books no held-out touch and writes no ledger row",
     )
+    off.add_argument(
+        "--reproduce",
+        action="store_true",
+        help="judge quick start: a cold run that books no touch and enforces no release-candidate preconditions",
+    )
+    off.add_argument("--force", action="store_true", help="overwrite a non-empty run directory")
     off.add_argument("--out", default="")
 
     ver = evs.add_parser("verify-submission", help="check a run directory against the submission contract")
