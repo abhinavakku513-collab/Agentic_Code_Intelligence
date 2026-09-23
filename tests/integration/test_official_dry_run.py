@@ -203,6 +203,15 @@ def test_a_dry_run_can_never_pass_verification(tmp_path, official_config, isolat
 
 
 @pytest.mark.slow
+def test_the_shipped_report_states_that_the_checksums_verify(tmp_path, official_config, isolated_ledger):
+    """The report inside the run directory is what a judge reads; it must not claim SHA256SUMS is missing."""
+    result = run(tmp_path, official_config, "B")
+    shipped = (result.run_dir / "verify_report.txt").read_text(encoding="utf-8")
+    checksum_line = next(line for line in shipped.splitlines() if "checksums valid" in line)
+    assert "[PASS]" in checksum_line, shipped
+
+
+@pytest.mark.slow
 def test_checksums_cover_every_artifact_including_the_verify_report(tmp_path, official_config, isolated_ledger):
     result = run(tmp_path, official_config, "B")
     listed = {

@@ -305,9 +305,13 @@ def run_pipeline(
             .build()
         ).run_id
 
+    # Checksums first, so the report a judge reads can actually state that they verify; then the report; then the
+    # checksums again, so the final SHA256SUMS also covers the report. A checksum file cannot cover itself, and a
+    # report that says "SHA256SUMS is missing" while sitting next to one is worse than no report.
+    write_checksums(run_dir)
     report = verify_submission(run_dir)
     (run_dir / "verify_report.txt").write_text(report.render() + "\n", encoding="utf-8")
-    write_checksums(run_dir)  # after the report, so every artifact is covered
+    write_checksums(run_dir)
     return OfficialRun(
         rc=rc,
         mode=mode.upper(),
