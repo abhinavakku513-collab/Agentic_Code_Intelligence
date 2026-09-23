@@ -23,4 +23,6 @@ verification, and the single sanctioned reader of the held-out labels.
 | E-14 | G1 picks the cheapest cell the bootstrap cannot separate from the best, and adopts a costlier cell only when it beats the incumbent by the gate rule; decisions are per route | `tests/unit/test_sweep_g1.py` |
 | E-13 | The G-M measurement pass runs the shipping path (factory → engine → metrics), measures cost with the vector cache off so "cold" means cold, and refuses to write a decision from anything but the full decision set | `tests/integration/test_bakeoff_pass.py` |
 
+| E-15 | Apps-Evolve generates a version history with ground truth by construction: deterministic for a seed, every recorded relation matches what the text did, and a lineage survives renames | `tests/unit/test_appsevolve.py` |
+
 **Non-goals.** No ranking logic (that is `acis.engine`); no mteb types cross into the engine (INV-11).

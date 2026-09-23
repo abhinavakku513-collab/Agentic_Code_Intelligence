@@ -386,9 +386,9 @@ def activate(repo_id: str, snapshot_id: str, *, expected_active: str | None = No
         _write_ref(repo_id, layout.PREV_REF, current)
     _write_ref(repo_id, layout.ACTIVE_REF, snapshot_id)
     with catalog.open_catalog() as db:
-        catalog.record_snapshot(
-            db, snapshot_id, repo_id=repo_id, label=_label_of(db, snapshot_id), state="ACTIVE", n_units=0
-        )
+        catalog.set_snapshot_state(db, snapshot_id, "ACTIVE")
+        if current:
+            catalog.set_snapshot_state(db, current, "READY")
         catalog.journal(db, repo_id, "build.activated", {"snapshot_id": snapshot_id, "previous": current})
     log.info("snapshot.activated", repo=repo_id, snapshot=snapshot_id, previous=current)
     return snapshot_id
@@ -408,11 +408,6 @@ def rollback(repo_id: str) -> str:
         catalog.journal(db, repo_id, "rollback", {"snapshot_id": previous, "from": current})
     log.info("snapshot.rolled_back", repo=repo_id, snapshot=previous, previous=current)
     return previous
-
-
-def _label_of(db: Any, snapshot_id: str) -> str:
-    row = catalog.get_snapshot(db, snapshot_id)
-    return str(row["label"]) if row is not None else "-"
 
 
 # -- recovery ------------------------------------------------------------------------------------------------------

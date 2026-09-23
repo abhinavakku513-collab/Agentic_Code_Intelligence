@@ -13,12 +13,6 @@ from collections.abc import Sequence
 from acis.core.errors import AcisError
 
 NOT_YET = {
-    "ingest": "Track B1",
-    "index": "Track B1",
-    "versions": "Track B1",
-    "activate": "Track B1",
-    "rollback": "Track B1",
-    "diff": "Track B1",
     "evolve": "Track B2",
     "serve": "Track B3",
     "train": "Phase 3",
@@ -124,7 +118,44 @@ def build_parser() -> argparse.ArgumentParser:
     verify = sub.add_parser("verify", help="integrity checks: seal, split lock, dataset manifest, ledger chain")
     verify.add_argument("--json", action="store_true")
 
+    ingest = sub.add_parser("ingest", help="read a source and build every version it contains (Track B1)")
+    ingest.add_argument("location", help="path to a JSONL file, directory, ZIP or git repository")
+    ingest.add_argument("--repo", required=True, help="repository id the versions are recorded under")
+    ingest.add_argument("--kind", default="jsonl", choices=["jsonl", "dir", "zip", "git"])
+    ingest.add_argument("--ext", default="", help="comma-separated extensions to ingest (default: .py)")
+    ingest.add_argument("--rev", default="", help="git only: a single revision to ingest instead of the history")
+    ingest.add_argument("--config", default="configs/dev.yaml")
+
+    index = sub.add_parser("index", help="build the versions of a repository that have no snapshot yet")
+    index.add_argument("--repo", required=True)
+    index.add_argument("--mode", default="eager_heads", choices=["eager_heads", "eager_all", "lazy"])
+    index.add_argument("--config", default="configs/dev.yaml")
+
+    versions = sub.add_parser("versions", help="list a repository's versions and which one is active")
+    versions.add_argument("--repo", required=True)
+    versions.add_argument("--json", action="store_true")
+    versions.add_argument("--config", default="configs/dev.yaml")
+
+    diff = sub.add_parser("diff", help="unit-level difference between two versions")
+    diff.add_argument("--repo", required=True)
+    diff.add_argument("--from", dest="from_version", required=True)
+    diff.add_argument("--to", dest="to_version", required=True)
+    diff.add_argument("--query", default="", help="also show what this query returns on each side")
+    diff.add_argument("--json", action="store_true")
+    diff.add_argument("--config", default="configs/dev.yaml")
+
+    activate = sub.add_parser("activate", help="point a repository at one of its versions")
+    activate.add_argument("--repo", required=True)
+    activate.add_argument("--version", required=True)
+    activate.add_argument("--config", default="configs/dev.yaml")
+
+    rollback = sub.add_parser("rollback", help="return a repository to its previous snapshot (instant)")
+    rollback.add_argument("--repo", required=True)
+    rollback.add_argument("--config", default="configs/dev.yaml")
+
     search = sub.add_parser("search", help="rank the corpus for a free-text query, with the evidence")
+    search.add_argument("--repo", default="", help="search a versioned repository instead of the APPS corpus")
+    search.add_argument("--version", default="latest", help="version selector (latest, v2, as_of:…, snapshot:…)")
     search.add_argument("query")
     search.add_argument("--config", default="configs/dev.yaml")
     search.add_argument("--top-k", type=int, default=10)

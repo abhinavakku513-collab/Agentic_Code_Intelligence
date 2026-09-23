@@ -60,11 +60,19 @@ class VersionedEngineMixin:
             return catalog.register_repo(db, repo_id, source_kind=source_kind)
 
     def versions(self, repo_id: str) -> list[dict[str, Any]]:
-        """Every recorded version, oldest first, with the snapshot that answers it (or `None`)."""
+        """Every recorded version, oldest first, with the snapshot that answers it (or `None`).
+
+        The unit count comes from the snapshot rather than the version row: a version is a name, a snapshot is
+        the content, and only one of the two knows how much there is.
+        """
         with catalog.open_catalog() as db:
             if not catalog.get_repo_exists(db, repo_id):
                 raise NotFound(f"no repository {repo_id!r}")
-            return catalog.rows_as_dicts(catalog.list_versions(db, repo_id))
+            rows = catalog.rows_as_dicts(catalog.list_versions(db, repo_id))
+            sizes = {str(s["snapshot_id"]): int(s["n_units"]) for s in catalog.list_snapshots(db, repo_id)}
+        for row in rows:
+            row["n_units"] = sizes.get(str(row.get("snapshot_id") or ""), 0)
+        return rows
 
     def build_reports(self, repo_id: str) -> list[BuildReport]:
         """What each build of this repository cost, in build order. Kept in-process, for the demo and the tests."""
@@ -128,6 +136,13 @@ class VersionedEngineMixin:
         if report is None:
             raise InvalidInput("the delta contained no versions", repo=repo_id)
         return report
+
+    def activate(self, repo_id: str, version: str) -> str:
+        """Point a repository at a named version. The snapshot exists already, so this is a ref rename."""
+        resolution = selectors.resolve(repo_id, version)
+        snapshot_id = snapshots.activate(repo_id, resolution.snapshot_id)
+        self._forget(repo_id)
+        return snapshot_id
 
     def rollback(self, repo_id: str) -> str:
         """Re-point the active version at the previous snapshot. Instant: nothing is rebuilt (D11)."""

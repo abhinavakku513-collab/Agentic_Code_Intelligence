@@ -156,6 +156,104 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- Track B1: repositories and versions --------------------------------------------------------------------------
+def _engine_for_cli(config_path: str):
+    """One engine, built the way every other surface builds one (the factory, the config, no special cases)."""
+    from acis.core.config import load_frozen_config
+    from acis.embed.factory import build_encoder
+    from acis.engine import AcisEngine
+
+    config = load_frozen_config(config_path)
+    return AcisEngine.from_config(config, encoder=build_encoder(config))
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    """Read a source and build every version it contains."""
+    from acis.core.types import SourceSpec
+
+    options: dict[str, Any] = {}
+    if args.ext:
+        options["extensions"] = [e if e.startswith(".") else f".{e}" for e in args.ext.split(",") if e]
+    if args.rev:
+        options["rev"] = args.rev
+
+    engine = _engine_for_cli(args.config)
+    spec = SourceSpec(kind=args.kind, location=args.location, options=options)
+    handle = engine.ingest(spec, repo_id=args.repo)
+    for report in engine.build_reports(args.repo):
+        print(
+            f"{report.snapshot.version_id:<14} {report.snapshot.snapshot_id}  {report.units_total:>5} units  "
+            f"{report.units_new:>5} new  {report.units_reused:>5} reused  {report.seconds:.2f}s"
+        )
+    print(f"\n{handle.state}: {handle.detail}")
+    return 0
+
+
+def cmd_versions(args: argparse.Namespace) -> int:
+    from acis.store import snapshots
+
+    engine = _engine_for_cli(args.config)
+    active = snapshots.active_snapshot_id(args.repo)
+    rows = engine.versions(args.repo)
+    if args.json:
+        _emit({"repo": args.repo, "active": active, "versions": rows}, True)
+        return 0
+    print(f"{'version':<16} {'snapshot':<20} {'units':>6}  state")
+    for row in rows:
+        marker = " *" if row["snapshot_id"] == active else "  "
+        snapshot = str(row["snapshot_id"] or "-")
+        print(f"{row['label']:<16} {snapshot:<20} {row.get('n_units', '-'):>6}  {row['state']}{marker}")
+    print("\n* = active")
+    return 0
+
+
+def cmd_diff(args: argparse.Namespace) -> int:
+    engine = _engine_for_cli(args.config)
+    comparison = engine.compare_versions(args.repo, args.from_version, args.to_version, query=args.query or None)
+    if args.json:
+        _emit(
+            {
+                "repo": comparison.repo_id,
+                "a": comparison.a,
+                "b": comparison.b,
+                "added": list(comparison.added),
+                "removed": list(comparison.removed),
+                "changed": list(comparison.changed),
+                "query_effect": {
+                    k: [list(x) for x in v] if isinstance(v, list) else v
+                    for k, v in dict(comparison.query_effect).items()
+                },
+            },
+            True,
+        )
+        return 0
+    for label, items in (("added", comparison.added), ("removed", comparison.removed), ("changed", comparison.changed)):
+        for key in items:
+            print(f"{label:<8} {key}")
+    if not (comparison.added or comparison.removed or comparison.changed):
+        print("no unit-level differences")
+    return 0
+
+
+def cmd_activate(args: argparse.Namespace) -> int:
+    engine = _engine_for_cli(args.config)
+    print(f"active: {engine.activate(args.repo, args.version)}")
+    return 0
+
+
+def cmd_rollback(args: argparse.Namespace) -> int:
+    engine = _engine_for_cli(args.config)
+    print(f"active: {engine.rollback(args.repo)}")
+    return 0
+
+
+def cmd_index(args: argparse.Namespace) -> int:
+    engine = _engine_for_cli(args.config)
+    report = engine.index(args.repo, mode=args.mode)
+    print(f"built {report.snapshot.version_id}: {report.units_total} units, {report.units_new} new")
+    return 0
+
+
 # -- Phase 2: the search surface ----------------------------------------------------------------------------------
 def cmd_search(args: argparse.Namespace) -> int:
     """Rank the corpus for a free-text query and show the evidence.
@@ -172,24 +270,41 @@ def cmd_search(args: argparse.Namespace) -> int:
     from acis.embed.factory import build_encoder
     from acis.engine import AcisEngine
 
-    if not apps.is_available():
-        raise InvalidInput("dataset assets are missing: run `make fetch` first")
-
     config = load_frozen_config(args.config)
     encoder = build_encoder(config)
     engine = AcisEngine.from_config(config, encoder=encoder)
+
     started = time.perf_counter()
-    snapshot = engine.build_snapshot(apps.load_corpus(), source="cli:search")
+    if args.repo:
+        # A versioned repository: the snapshot is already on disk, so this opens one rather than building one.
+        data = engine.open_version(args.repo, args.version)
+        snapshot = data.snapshot
+    else:
+        if not apps.is_available():
+            raise InvalidInput("dataset assets are missing: run `make fetch` first")
+        snapshot = engine.build_snapshot(apps.load_corpus(), source="cli:search")
     build_seconds = time.perf_counter() - started
 
     response = engine.search(
-        SearchRequest(query=args.query, top_k=args.top_k, mode=args.mode, explain=args.explain, diagnostics=True)
+        SearchRequest(
+            query=args.query,
+            repo_id=args.repo or "-",
+            version=args.version,
+            top_k=args.top_k,
+            mode=args.mode,
+            explain=args.explain,
+            diagnostics=True,
+        )
     )
     if args.json:
         _emit(
             {
                 "query": args.query,
-                "snapshot": {"id": snapshot.snapshot_id, "n_units": snapshot.n_units},
+                "snapshot": {
+                    "id": snapshot.snapshot_id,
+                    "n_units": snapshot.n_units,
+                    "version": snapshot.version_id,
+                },
                 "encoder": {"name": encoder.name, "submission_capable": encoder.submission_capable},
                 "route": response.route,
                 "no_strong_match": response.no_strong_match,
@@ -201,6 +316,7 @@ def cmd_search(args: argparse.Namespace) -> int:
                         "rank": h.rank,
                         "score": round(h.score, 6),
                         "unit_id": h.unit.unit_id,
+                        "key": h.unit.key,
                         "body_hash": h.unit.body_hash,
                         "n_bytes": h.unit.n_bytes,
                         "source": h.source,
@@ -214,7 +330,9 @@ def cmd_search(args: argparse.Namespace) -> int:
 
     stand_in = "" if encoder.submission_capable else "  (stand-in: not submission-capable)"
     print(f"encoder  : {encoder.name}{stand_in}")
-    print(f"snapshot : {snapshot.snapshot_id}  {snapshot.n_units} units, built in {build_seconds:.1f}s")
+    opened = "opened" if args.repo else "built"
+    version = f"  version {snapshot.version_id}" if args.repo else ""
+    print(f"snapshot : {snapshot.snapshot_id}{version}  {snapshot.n_units} units, {opened} in {build_seconds:.1f}s")
     timings = "  ".join(f"{k}={v:.1f}ms" for k, v in sorted(response.timings_ms.items()))
     print(f"route    : {response.route}  confidence={response.confidence}  {timings}")
     if response.degradations:
@@ -222,7 +340,9 @@ def cmd_search(args: argparse.Namespace) -> int:
     print()
     for hit in response.results:
         first = next((line for line in hit.source.splitlines() if line.strip()), "")
-        print(f"{hit.rank:>3}  {hit.score:8.4f}  {hit.unit.unit_id:<12} {hit.unit.body_hash[:12]}  {first[:88]}")
+        # The key is what a person recognises ("sort.py"); the body hash is what makes the evidence checkable.
+        label = (hit.unit.key or hit.unit.unit_id)[:24]
+        print(f"{hit.rank:>3}  {hit.score:8.4f}  {label:<24} {hit.unit.body_hash[:12]}  {first[:76]}")
     return 0
 
 

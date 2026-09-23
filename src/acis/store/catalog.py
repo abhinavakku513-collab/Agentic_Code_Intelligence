@@ -217,6 +217,15 @@ def record_snapshot(
     )
 
 
+def set_snapshot_state(db: sqlite3.Connection, snapshot_id: str, state: str) -> None:
+    """Change a snapshot's state without touching what it *is*.
+
+    Activation is a state change, not a rebuild: going through `record_snapshot` would upsert the row and reset
+    the unit count to whatever the caller happened to pass, which is how a snapshot ends up claiming zero units.
+    """
+    db.execute("UPDATE snapshots SET state = ? WHERE snapshot_id = ?", (state, snapshot_id))
+
+
 def get_snapshot(db: sqlite3.Connection, snapshot_id: str) -> sqlite3.Row | None:
     row: sqlite3.Row | None = db.execute("SELECT * FROM snapshots WHERE snapshot_id = ?", (snapshot_id,)).fetchone()
     return row
@@ -284,5 +293,6 @@ __all__ = [
     "record_snapshot",
     "record_version",
     "register_repo",
+    "set_snapshot_state",
     "rows_as_dicts",
 ]

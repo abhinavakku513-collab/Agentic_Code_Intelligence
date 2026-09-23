@@ -1,26 +1,19 @@
-# `acis.engine` — contract
+# `acis.cli` — contract
 
-Spec: `docs/spec/06-contracts-testing-ops.md` §1 and `docs/spec/02-p0-engine.md` §4. Rules: `.claude/rules/p0-engine.md`.
+Spec: `docs/spec/06-contracts-testing-ops.md` §3. The CLI is a thin surface over the same library the tests call;
+no command contains logic of its own.
 
-**Responsibility.** The one engine: snapshots, channels, routing, composition, the degradation ladder, and the batch
-surface the mteb adapter uses. `protocol.SearchEngine` is **frozen at the end of Phase 1** — Track B builds against
-it, and changing a signature needs an ADR.
+| # | Guarantee | Test |
+|---|---|---|
+| L-1 | Every command resolves configs and data from the repo root (`ACIS_ROOT`), never the CWD (D16) | `tests/unit/test_core.py` |
+| L-2 | Commands not yet built exit 2 naming the phase that builds them (docs/spec/07) | `tests/unit/test_cli.py` |
+| L-3 | `acis fetch` is the only network path; it writes no sealed pattern into `ACIS_HOME` and re-checks the seal | `tests/security/test_seal.py` |
+| L-4 | `acis doctor` writes `runs/hardware.json` and exits non-zero when the seal check fails | `tests/unit/test_cli.py` |
+| L-5 | `acis eval official` refuses to run unless `HF_HOME` points at the physical seal (D19) | `tests/security/test_seal.py` |
+| L-6 | Typed errors print as `code: message` and exit 1; they never raise a traceback at the user | `tests/unit/test_cli.py` |
+| L-8 | `acis fetch --models` downloads safetensors only — never a pickle checkpoint — resolves a moving revision to a commit, and refuses a non-permissive model unless it is asked for as reference (D4, CLAUDE.md §4) | `tests/unit/test_model_fetch.py` |
+| L-7 | `acis search` returns exactly `min(top_k, N)` ranked hits, prints evidence re-read from the content store (INV-1), and labels a stand-in encoder as one | `tests/integration/test_search_cli.py` |
 
-| # | Guarantee | Invariant | Test |
-|---|---|---|---|
-| N-1 | Every `Hit.source` is re-read from the content store by `body_hash`; nothing is generated | INV-1 | `tests/unit/test_prep_and_engine.py` |
-| N-2 | Results come only from the requested snapshot; the query-vector cache key carries `snapshot_id` and `config_hash` | INV-2 | `tests/property/test_invariants.py` |
-| N-3 | A query's ranking never depends on the other queries in its batch | INV-3 | `tests/property/test_invariants.py`, P4 |
-| N-4 | External ids are opaque; ties break on the **content hash**, and only exact duplicates reach the corpus ordinal | INV-4, D9 | `tests/property/test_invariants.py`, P5, P7 |
-| N-5 | Same snapshot, config, profile and thread count ⇒ same ranking | INV-6 | `tests/robustness`, P6 |
-| N-6 | Every fallback increments a counter and appears in `degradations`; strict mode raises instead | INV-7 | `tests/unit/test_prep_and_engine.py` |
-| N-7 | Only VALID snapshots are searchable unless `allow_partial=True` | INV-9 | `tests/unit/test_prep_and_engine.py` |
-| N-8 | `agent_calls == 0`: there is no agent on this path | INV-13 | `tests/unit/test_prep_and_engine.py` |
-| N-9 | Arbitrary queries never crash: empty raises `InvalidInput`, over-long is head+tail truncated, hostile input returns a ranking | INV-15 | `tests/robustness/test_query_agnostic.py` |
-| N-11 | The retrieval core ranks only what it returns: the top-`k` cut keeps every document tied with the k-th best, so it equals the full ranking document for document | INV-4, INV-10 | `tests/metamorphic/test_parity.py` (P8) |
-| N-10 | The route reaches the encoder **and** the query-vector cache key, so two routes are two vectors of the same text | INV-15, INV-2 | `tests/unit/test_dense_wiring.py` |
+| L-9 | `acis ingest/versions/diff/activate/rollback` drive the same engine methods the tests call, and `acis search --repo/--version` answers from one pinned snapshot | `tests/integration/test_p1_versions.py`, `tests/integration/test_search_cli.py` |
 
-**Phase boundaries.** Channel fusion is decided by gate G2 in Phase 4, so `mode="hybrid"` raises `NotReady` rather
-than inventing an ungated ranking; routing v1.1 falls back to `generic` until the OOD bank exists (Phase 2+); Track B
-methods (`ingest`, `index`, `update_version`, `compare_versions`, `retrieve_evolution`) carry their frozen signatures
-and raise `NotReady`.
+**Non-goals.** No evaluation endpoint is ever exposed over the network API (docs/spec/06 §1); `acis serve` is Track B3.
