@@ -122,6 +122,76 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- Phase 2: the search surface ----------------------------------------------------------------------------------
+def cmd_search(args: argparse.Namespace) -> int:
+    """Rank the corpus for a free-text query and show the evidence.
+
+    The snapshot is built in this process and thrown away with it. Persisting one is Track B1's job (D11), so a
+    real encoder pays the full embedding cost per invocation — which is exactly why `acis eval gate` and the demo
+    runbook build one snapshot and ask many questions of it.
+    """
+    import time
+
+    from acis.appsdata import apps
+    from acis.core.config import load_frozen_config
+    from acis.core.types import SearchRequest
+    from acis.embed.factory import build_encoder
+    from acis.engine import AcisEngine
+
+    if not apps.is_available():
+        raise InvalidInput("dataset assets are missing: run `make fetch` first")
+
+    config = load_frozen_config(args.config)
+    encoder = build_encoder(config)
+    engine = AcisEngine.from_config(config, encoder=encoder)
+    started = time.perf_counter()
+    snapshot = engine.build_snapshot(apps.load_corpus(), source="cli:search")
+    build_seconds = time.perf_counter() - started
+
+    response = engine.search(
+        SearchRequest(query=args.query, top_k=args.top_k, mode=args.mode, explain=args.explain, diagnostics=True)
+    )
+    if args.json:
+        _emit(
+            {
+                "query": args.query,
+                "snapshot": {"id": snapshot.snapshot_id, "n_units": snapshot.n_units},
+                "encoder": {"name": encoder.name, "submission_capable": encoder.submission_capable},
+                "route": response.route,
+                "no_strong_match": response.no_strong_match,
+                "confidence": response.confidence,
+                "timings_ms": dict(response.timings_ms),
+                "degradations": list(response.degradations),
+                "results": [
+                    {
+                        "rank": h.rank,
+                        "score": round(h.score, 6),
+                        "unit_id": h.unit.unit_id,
+                        "body_hash": h.unit.body_hash,
+                        "n_bytes": h.unit.n_bytes,
+                        "source": h.source,
+                    }
+                    for h in response.results
+                ],
+            },
+            True,
+        )
+        return 0
+
+    stand_in = "" if encoder.submission_capable else "  (stand-in: not submission-capable)"
+    print(f"encoder  : {encoder.name}{stand_in}")
+    print(f"snapshot : {snapshot.snapshot_id}  {snapshot.n_units} units, built in {build_seconds:.1f}s")
+    timings = "  ".join(f"{k}={v:.1f}ms" for k, v in sorted(response.timings_ms.items()))
+    print(f"route    : {response.route}  confidence={response.confidence}  {timings}")
+    if response.degradations:
+        print(f"degraded : {', '.join(response.degradations)}")
+    print()
+    for hit in response.results:
+        first = next((line for line in hit.source.splitlines() if line.strip()), "")
+        print(f"{hit.rank:>3}  {hit.score:8.4f}  {hit.unit.unit_id:<12} {hit.unit.body_hash[:12]}  {first[:88]}")
+    return 0
+
+
 # -- Phase 1: evaluation ------------------------------------------------------------------------------------------
 def cmd_eval(args: argparse.Namespace) -> int:
     handler = {

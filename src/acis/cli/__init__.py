@@ -15,7 +15,6 @@ from acis.core.errors import AcisError
 NOT_YET = {
     "ingest": "Track B1",
     "index": "Track B1",
-    "search": "Phase 2",
     "versions": "Track B1",
     "activate": "Track B1",
     "rollback": "Track B1",
@@ -119,6 +118,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify = sub.add_parser("verify", help="integrity checks: seal, split lock, dataset manifest, ledger chain")
     verify.add_argument("--json", action="store_true")
+
+    search = sub.add_parser("search", help="rank the corpus for a free-text query, with the evidence")
+    search.add_argument("query")
+    search.add_argument("--config", default="configs/dev.yaml")
+    search.add_argument("--top-k", type=int, default=10)
+    search.add_argument("--mode", default="auto", choices=["auto", "dense", "lexical", "hybrid"])
+    search.add_argument("--explain", action="store_true")
+    search.add_argument("--json", action="store_true")
 
     report = sub.add_parser("report", help="ledger-backed evidence table")
     report.add_argument("--claims", action="store_true")
