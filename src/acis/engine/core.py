@@ -31,7 +31,6 @@ from acis.core.errors import InvalidInput, NotFound, NotReady, SnapshotInvalid
 from acis.core.hashing import hash_obj, sha256_text, short
 from acis.core.numeric import resolve_threads
 from acis.core.types import (
-    BuildMode,
     BuildReport,
     Confidence,
     Diagnostics,
@@ -40,20 +39,16 @@ from acis.core.types import (
     EvolveRequest,
     EvolveResponse,
     Hit,
-    JobHandle,
-    Limits,
-    RefSpec,
     Route,
     SearchRequest,
     SearchResponse,
     Snapshot,
     SnapshotRef,
     Snippet,
-    SourceSpec,
     Unit,
-    VersionComparison,
 )
 from acis.embed.base import Encoder, exact_search
+from acis.engine.versions import VersionedEngineMixin
 from acis.lexical.bm25 import Bm25Index
 from acis.lexical.tokenize import corpus_text
 from acis.obs.counters import Counters, degradation
@@ -113,7 +108,7 @@ DEFAULT_CONFIG: dict[str, object] = {
 }
 
 
-class AcisEngine:
+class AcisEngine(VersionedEngineMixin):
     """The engine. Construct with `AcisEngine.from_config(...)`; everything else is a method on the frozen surface."""
 
     def __init__(self, config: FrozenConfig, *, encoder: Encoder | None = None) -> None:
@@ -121,7 +116,11 @@ class AcisEngine:
         self.encoder = encoder
         self.counters = Counters()
         self.threads = resolve_threads(config.get("run.threads", "auto_physical"))
+        #: In-memory snapshots built through `build_snapshot` (the P0 path: one corpus, no versions).
         self._snapshots: dict[str, SnapshotData] = {}
+        #: Snapshots loaded from the store, keyed by `(repo_id, snapshot_id)` (the P1 path, Track B1).
+        self._loaded: dict[tuple[str, str], SnapshotData] = {}
+        self._reports: dict[str, list[BuildReport]] = {}
         self._query_vector_cache: dict[str, np.ndarray] = {}
 
     # -- construction ------------------------------------------------------------------------------------------
@@ -442,8 +441,8 @@ class AcisEngine:
     def search(self, req: SearchRequest) -> SearchResponse:
         """One query against one pinned snapshot, with evidence re-read from the content store (INV-1)."""
         started = time.perf_counter()
-        if not self._snapshots:
-            raise NotReady("no snapshot has been built yet")
+        # Resolution decides where the snapshot comes from — the store for a repository, memory for the P0 batch
+        # surface — so the "is there anything to search" check belongs there, not here.
         data = self._resolve_snapshot(req)
         if data.snapshot.state != "VALID" and not req.allow_partial:
             raise SnapshotInvalid(f"snapshot {data.snapshot.snapshot_id} is {data.snapshot.state} (INV-9)")
@@ -498,11 +497,22 @@ class AcisEngine:
         )
 
     def _resolve_snapshot(self, req: SearchRequest) -> SnapshotData:
+        """Resolve the request's version **once**, and pin it for the whole request (INV-2).
+
+        A request that names a repository is answered from the store (Track B1); one that does not is answered
+        from the in-memory snapshots the P0 batch surface builds. The two never mix: a repository id is how a
+        caller says "this is a versioned corpus".
+        """
+        if req.repo_id not in ("-", "", None):
+            return self.open_version(req.repo_id, req.version)
+
         if req.version not in ("latest", "", None):
             for data in self._snapshots.values():
                 if req.version in (data.snapshot.version_id, data.snapshot.snapshot_id):
                     return data
             raise NotFound(f"no snapshot for version {req.version!r}")
+        if not self._snapshots:
+            raise NotReady("no snapshot has been built yet")
         return next(reversed(list(self._snapshots.values())))
 
     def _confidence(self, ranked: Sequence[tuple[str, float]]) -> tuple[Confidence, bool]:
@@ -554,19 +564,9 @@ class AcisEngine:
 
         return ladder.run_spec(self, spec)
 
-    # -- Track B surface (frozen signatures; built in B1/B2) -------------------------------------------------------
-    def ingest(self, source: SourceSpec, *, repo_id: str, limits: Limits | None = None) -> JobHandle:
-        raise NotReady("ingest is built in Track B1 (docs/spec/04)")
-
-    def index(self, repo_id: str, *, refs: RefSpec | None = None, mode: BuildMode = "eager_heads") -> BuildReport:
-        raise NotReady("index is built in Track B1 (docs/spec/04)")
-
-    def update_version(self, repo_id: str, delta: SourceSpec, *, expected_active: str | None = None) -> BuildReport:
-        raise NotReady("update_version is built in Track B1 (docs/spec/04)")
-
-    def compare_versions(self, repo_id: str, a: str, b: str, *, query: str | None = None) -> VersionComparison:
-        raise NotReady("compare_versions is built in Track B1 (docs/spec/04)")
-
+    # -- Track B surface -------------------------------------------------------------------------------------------
+    # `ingest`, `index`, `update_version`, `compare_versions`, `rollback` and `open_version` come from
+    # `VersionedEngineMixin` (Track B1, `acis.engine.versions`).
     def search_version(self, repo_id: str, version: str, query: str, **kw: object) -> SearchResponse:
         return self.search(SearchRequest(query=query, repo_id=repo_id, version=version, **kw))  # type: ignore[arg-type]
 

@@ -272,14 +272,16 @@ def test_short_channel_results_are_padded_without_using_corpus_position(tiny_cor
     assert len(tail_scores) == 1 and max(tail_scores) < min(s for _, s in partial_f)
 
 
-def test_track_b_methods_are_frozen_but_not_implemented(engine):
-    eng, _ = engine
-    from acis.core.types import EvolveRequest, SourceSpec
+def test_the_versioned_surface_exists_and_the_evolution_one_does_not_yet(engine):
+    """B1 landed, so `ingest`/`index` are real; B2 has not, so `retrieve_evolution` is still a frozen stub.
 
-    with pytest.raises(NotReady, match="Track B1"):
-        eng.ingest(SourceSpec(kind="jsonl", location="x"), repo_id="r")
-    with pytest.raises(NotReady, match="Track B1"):
-        eng.index("r")
+    The distinction is the point of the frozen interface: a method that is not built raises `NotReady` naming the
+    track that builds it, rather than being absent and silently changing the shape of the surface.
+    """
+    eng, _ = engine
+    from acis.core.types import EvolveRequest
+
+    assert callable(eng.ingest) and callable(eng.index) and callable(eng.update_version)
     with pytest.raises(NotReady, match="Track B2"):
         eng.retrieve_evolution(EvolveRequest(query="x"))
 

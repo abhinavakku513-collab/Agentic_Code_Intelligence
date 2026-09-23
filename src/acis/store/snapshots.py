@@ -99,9 +99,16 @@ def tree_hash(pairs: Sequence[tuple[str, str]]) -> str:
     return hash_obj(sorted((str(k), str(h)) for k, h in pairs))
 
 
-def snapshot_id_for(tree: str, config_hash: str, *, source_id: str = "") -> str:
-    """Identical content and identical build settings ⇒ identical snapshot (spec 04 §1)."""
-    return SNAPSHOT_PREFIX + short(hash_obj({"source": source_id, "tree": tree, "config": config_hash}), 16)
+def snapshot_id_for(tree: str, config_hash: str) -> str:
+    """Identical content and identical build settings ⇒ identical snapshot (D11).
+
+    Deliberately **not** keyed on the source (spec 04 §1 includes `source_id`; ADR-0006 records the deviation).
+    Feeding the source in would mean the same corpus ingested from a JSONL file and from a directory produced two
+    different snapshots of identical content, and re-ingesting one version of a history would not recognise the
+    version it already had — which is exactly the dedup D11 promises. The source stays in the manifest as
+    provenance, where it answers "where did this come from" without deciding "is this the same content".
+    """
+    return SNAPSHOT_PREFIX + short(hash_obj({"tree": tree, "config": config_hash}), 16)
 
 
 def unit_id_for(snapshot_id: str, key: str) -> str:
@@ -140,7 +147,7 @@ def build_snapshot(
     _crash_if_asked("after_blobs")
 
     tree = tree_hash(list(zip(keys, digests, strict=True)))
-    snapshot_id = snapshot_id_for(tree, config_hash, source_id=source_id)
+    snapshot_id = snapshot_id_for(tree, config_hash)
 
     with catalog.open_catalog() as db:
         catalog.register_repo(db, repo_id, source_kind="units")

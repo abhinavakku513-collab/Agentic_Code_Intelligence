@@ -123,6 +123,10 @@ def register_repo(
     return repo_id
 
 
+def get_repo_exists(db: sqlite3.Connection, repo_id: str) -> bool:
+    return db.execute("SELECT 1 FROM repos WHERE repo_id = ?", (repo_id,)).fetchone() is not None
+
+
 def list_repos(db: sqlite3.Connection) -> list[sqlite3.Row]:
     return list(db.execute("SELECT * FROM repos ORDER BY repo_id"))
 
@@ -266,6 +270,7 @@ __all__ = [
     "SCHEMA",
     "SCHEMA_VERSION",
     "get_job",
+    "get_repo_exists",
     "get_snapshot",
     "get_version",
     "journal",
