@@ -297,16 +297,21 @@ def verify_submission(run_dir: str | Path, *, qrels: Mapping[str, Mapping[str, i
     elif ndcg10 is None:
         report.add("run.trec re-scores to the JSON", SKIP, "no ndcg_at_10 in the JSON to compare against")
     else:
-        rescored = score_run(qrels, read_trec(trec_path))
+        run = read_trec(trec_path)
+        rescored = score_run(qrels, run)
         deltas = {
             "ndcg_at_10": abs(rescored["ndcg_at_10"] - float(ndcg10)),
             **({"mrr_at_10": abs(rescored["mrr_at_10"] - float(mrr10))} if mrr10 is not None else {}),
         }
         worst = max(deltas.values())
+        # The query count is reported alongside the deltas because the usual cause of a mismatch is not a wrong
+        # score but a different denominator: TREC format cannot express "this query was graded and ranked
+        # nothing", so such a query is absent from the file and the two means are over different query sets.
+        scored_here = len(set(run) & set(qrels))
         report.add(
             "run.trec re-scores to the JSON",
             PASS if worst <= RESCORE_TOLERANCE else FAIL,
-            ", ".join(f"Δ{k}={v:.3e}" for k, v in deltas.items()),
+            ", ".join(f"Δ{k}={v:.3e}" for k, v in deltas.items()) + f" over {scored_here} queries",
         )
 
     # -- ledger ---------------------------------------------------------------------------------------------

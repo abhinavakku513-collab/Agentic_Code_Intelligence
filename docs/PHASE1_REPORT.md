@@ -144,6 +144,21 @@ test, a missing source file, an undefined test function or an unknown ledger id.
    tests, the fixture guard in the contract suite), but a planted-document assertion belongs there before that
    suite is cited as INV-15 evidence in Phase 3.
 
+## Accounting that can be audited rather than trusted
+
+Three integrity mechanisms were present but not actually enforceable, and each is now checkable by someone who
+does not trust us:
+
+* **DEV-H** (`--fold 4`) is a once-per-milestone confirmation, not a second decision set. Its counter defaulted
+  the milestone — so the first unlabelled run blocked every later one while any invented name granted a fresh
+  touch — lived in a file outside git that `rm` would erase, and was spent *before* the run, so a typo burned it.
+  The milestone is now required, the touch is booked after the run succeeds, and it is chained into the ledger.
+* **The held-out touch budget** is checked before the expensive pass rather than after it, and the manifest
+  declares what the run spent so `verify-submission` can compare it against that run's own ledger row. Declaring
+  fewer touches than were booked now fails; so does a manifest that declares none at all.
+* **The ledger chain** is verified before a release candidate is appended, for the same reason as the budget: a
+  problem discovered after the pass has already cost the touch.
+
 ## Two network paths, not one
 
 `AGENTS.md` says only `make fetch` uses the network. Phase 1 adds a second, dev-only one:
