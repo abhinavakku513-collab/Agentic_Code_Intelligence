@@ -203,6 +203,24 @@ def test_a_dry_run_can_never_pass_verification(tmp_path, official_config, isolat
 
 
 @pytest.mark.slow
+def test_the_model_revision_is_recovered_from_the_predictions_artifact(tmp_path, official_config, isolated_ledger):
+    """`TaskResult.to_dict()` carries no model revision in mteb 2.21.0, so the check reads the predictions file.
+
+    It is keyed on `mteb_model_meta`, which is what mteb actually writes — reading a plausible-but-wrong key
+    turned this integrity check into a permanent SKIP, which is indistinguishable from it not existing.
+    """
+    from acis.eval.verify import _revision_from_predictions
+
+    result = run(tmp_path, official_config, "B")
+    recovered = _revision_from_predictions(result.run_dir)
+    manifest = json.loads((result.run_dir / MANIFEST_JSON).read_text(encoding="utf-8"))
+    assert recovered, "no model revision could be recovered from the predictions artifact"
+    assert recovered == manifest["model_revision"]
+    report = verify_submission(result.run_dir)
+    assert next(c.status for c in report.checks if c.name == "model revision matches manifest") == "PASS"
+
+
+@pytest.mark.slow
 def test_the_shipped_report_states_that_the_checksums_verify(tmp_path, official_config, isolated_ledger):
     """The report inside the run directory is what a judge reads; it must not claim SHA256SUMS is missing."""
     result = run(tmp_path, official_config, "B")

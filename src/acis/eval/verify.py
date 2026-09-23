@@ -94,7 +94,9 @@ def _revision_from_predictions(run_dir: Path) -> str:
             continue
         if not isinstance(payload, Mapping):
             continue
-        meta = payload.get("model_meta") or payload.get("model") or {}
+        # mteb 2.21.0 writes `{"mteb_model_meta": {"model_name", "revision"}, "<subset>": {...}}`; the other keys
+        # are accepted so a version that renames the block does not silently turn this check back into a SKIP.
+        meta = payload.get("mteb_model_meta") or payload.get("model_meta") or payload.get("model") or {}
         candidate = payload.get("model_revision") or (meta.get("revision") if isinstance(meta, Mapping) else None)
         if candidate:
             return str(candidate)
