@@ -346,6 +346,40 @@ def cmd_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_evolve(args: argparse.Namespace) -> int:
+    """The Bonus from the terminal: one answer per lineage, with its best revision and its history."""
+    from acis.core.types import EvolveRequest
+
+    engine = _engine_for_cli(args.config)
+    response = engine.retrieve_evolution(
+        EvolveRequest(query=args.query, repo_id=args.repo, top_k=args.top_k, flat=args.flat)
+    )
+    if args.json:
+        _emit({"groups": list(response.groups), "degradations": list(response.degradations)}, True)
+        return 0
+
+    print(f"{len(response.groups)} lineage(s)   " + "  ".join(response.degradations))
+    print()
+    for position, group in enumerate(response.groups, start=1):
+        best = group["best"]
+        flag = "  [contains an inferred link]" if group.get("inferred") else ""
+        print(
+            f"{position:>3}  {group['score']:.4f}  {best['key']:<28} best={best['version']:<6} "
+            f"{group['n_revisions']} revisions {group['span'][0]}->{group['span'][1]}{flag}"
+        )
+        marks = "".join("*" if step["changed"] else "-" for step in group["timeline"])
+        print(f"     timeline {marks}  ({' '.join(step['version'] for step in group['timeline'])})")
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Run the HTTP API and the demo UI over the same engine every other surface uses."""
+    from acis.api.app import serve
+
+    serve(host=args.host, port=args.port, config_path=args.config)
+    return 0
+
+
 # -- Phase 1: evaluation ------------------------------------------------------------------------------------------
 def cmd_eval(args: argparse.Namespace) -> int:
     handler = {

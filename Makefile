@@ -30,6 +30,6 @@ rc-official:
 # JUDGE QUICK START (README opens with expected runtimes per hardware tier)
 reproduce:        ; $(PY) acis eval official --config configs/official.yaml --cold --strict --reproduce --force --out runs/reproduce
 reproduce-cache:  ; $(PY) acis eval official --config configs/official.yaml --cache-verify --strict --force --out runs/reproduce-cache
-demo:             ; @test -x scripts/demo/run_demo.sh && scripts/demo/run_demo.sh || { echo "demo: built in Track B3 (scripts/demo/)"; exit 2; }
+demo:             ; @scripts/demo/run.sh
 preflight:        ; @test -x scripts/preflight.sh && scripts/preflight.sh || { echo "preflight: use the /preflight skill (judge-simulator subagent); scripted parts arrive in Phase 6"; exit 2; }
 evidence:         ; $(PY) acis report --claims --out docs/submission/evidence.md

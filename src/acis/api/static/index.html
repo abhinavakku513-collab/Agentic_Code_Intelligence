@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>ACIS · code retrieval</title>
+<link rel="stylesheet" href="app.css" />
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <div>
+      <h1>ACIS</h1>
+      <p class="tagline">Agentic Code Intelligence · local, offline, CPU-only</p>
+    </div>
+  </div>
+  <dl class="vitals" id="vitals">
+    <div><dt>encoder</dt><dd id="v-encoder">…</dd></div>
+    <div><dt>profile</dt><dd id="v-profile">…</dd></div>
+    <div><dt>threads</dt><dd id="v-threads">…</dd></div>
+    <div><dt>status</dt><dd id="v-status">…</dd></div>
+  </dl>
+</header>
+
+<main>
+  <form class="search" id="form" autocomplete="off">
+    <div class="field">
+      <textarea id="q" rows="3" placeholder="Describe the program you are looking for — a full problem statement, a question, or a fragment of code."></textarea>
+      <button type="submit" id="go">Search</button>
+    </div>
+
+    <div class="controls">
+      <fieldset class="segmented" aria-label="retrieval channel">
+        <legend>channel</legend>
+        <label><input type="radio" name="mode" value="auto" checked /><span>auto</span></label>
+        <label><input type="radio" name="mode" value="dense" /><span>dense</span></label>
+        <label><input type="radio" name="mode" value="lexical" /><span>BM25</span></label>
+        <label><input type="radio" name="mode" value="hybrid" /><span>hybrid</span></label>
+      </fieldset>
+
+      <label class="control">repository
+        <select id="repo"><option value="-">APPS corpus (P0)</option></select>
+      </label>
+      <label class="control">version
+        <select id="version"><option value="latest">latest</option></select>
+      </label>
+      <label class="control">results
+        <select id="topk"><option>10</option><option>25</option><option>50</option></select>
+      </label>
+      <label class="control checkbox" id="evolve-wrap" hidden>
+        <input type="checkbox" id="evolve" /> group by lineage <span class="hint">(Bonus)</span>
+      </label>
+    </div>
+  </form>
+
+  <section class="statusbar" id="statusbar" hidden>
+    <div class="timings" id="timings"></div>
+    <div class="badges" id="badges"></div>
+  </section>
+
+  <section id="results" class="results" aria-live="polite"></section>
+  <p class="empty" id="empty">Ask anything. Every result below is read back out of the content store by its hash — nothing is generated.</p>
+</main>
+
+<footer>
+  <span id="footnote">Exact search over the whole corpus · rank-derived scores · no network at query time</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

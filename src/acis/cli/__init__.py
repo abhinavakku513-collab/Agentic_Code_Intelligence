@@ -13,8 +13,6 @@ from collections.abc import Sequence
 from acis.core.errors import AcisError
 
 NOT_YET = {
-    "evolve": "Track B2",
-    "serve": "Track B3",
     "train": "Phase 3",
 }
 
@@ -162,6 +160,19 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--mode", default="auto", choices=["auto", "dense", "lexical", "hybrid"])
     search.add_argument("--explain", action="store_true")
     search.add_argument("--json", action="store_true")
+
+    serve = sub.add_parser("serve", help="run the HTTP API and the demo UI (loopback by default)")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--config", default="configs/dev.yaml")
+
+    evolve = sub.add_parser("evolve", help="evolution-aware retrieval across every version (Bonus)")
+    evolve.add_argument("query")
+    evolve.add_argument("--repo", required=True)
+    evolve.add_argument("--top-k", type=int, default=10)
+    evolve.add_argument("--flat", action="store_true", help="also show the ungrouped list, duplicates and all")
+    evolve.add_argument("--json", action="store_true")
+    evolve.add_argument("--config", default="configs/dev.yaml")
 
     report = sub.add_parser("report", help="ledger-backed evidence table")
     report.add_argument("--claims", action="store_true")
