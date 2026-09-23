@@ -10,7 +10,7 @@ fetch-models:     ; @test -n "$(MODELS)" || { echo "usage: make fetch-models MOD
 doctor:           ; $(PY) acis doctor
 lint:             ; $(PY) ruff format --check . && $(PY) ruff check .
 typecheck:
-	@dirs="$$(ls -d src/acis/core src/acis/eval src/acis/engine 2>/dev/null)"; \
+	@dirs="$$(ls -d src/acis/core src/acis/eval src/acis/engine src/acis/store 2>/dev/null)"; \
 	if [ -n "$$dirs" ]; then $(PY) mypy --strict $$dirs; else echo "typecheck: no strict packages yet"; fi
 test:             ; $(PY) pytest -q
 test-fast:        ; $(PY) pytest -q -m "not slow and not gpu and not network" $(FAST_DIRS)
