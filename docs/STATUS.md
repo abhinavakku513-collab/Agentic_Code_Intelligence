@@ -21,7 +21,8 @@ tool cannot perform or sign for:
    shell and record the Claude Code version here. Only the owner can do the first and attest the second.
 2. **G0.4 / G0.5 were deliberately not run** (model radar, zero-shot on all 5,000 dev queries). Both need encoder
    weights and multi-hour CPU passes, and both feed **G-M, which Phase 2 decides** — no Phase 1 acceptance row
-   depends on them. Closing Phase 0 needs the owner to accept that deferral, ideally via an ADR.
+   depends on them. The reasoning, the risk accepted and the alternatives are written up in
+   `docs/adr/0005-defer-g04-g05-to-phase-2.md`, which is **proposed and needs owner confirmation**.
 3. **The compute and deadline rows above are still undeclared**, and the declared dev host is T-min, so it is not
    the host a resource scorecard may quote (docs/spec/06 §0 reserves that for T-rec).
 
@@ -29,21 +30,30 @@ Nothing is blocked *technically*: the `AcisEngine` interface is frozen, so Track
 
 ## Owner actions pending
 1 Run the canary (docs/CANARY.md) and record the version above · 2 answer the compute/deadline questions ·
-3 send docs/official/ORGANIZER_QA.md · 4 fetch the held-out qrels into the sealed area (`acis fetch --sealed`) ·
+3 send docs/official/ORGANIZER_QA.md · 4 confirm or reject ADR-0005 (the G0.4/G0.5 deferral) ·
 5 fill docs/reference/third_party_scores.md or leave R-02 unmeasured · 6 set configs/targets.yaml after G0.5 ·
-7 decide on the G0.4/G0.5 deferral · 8 optionally anchor the `Edit(./data/**)` deny glob in `.claude/settings.json`
-so the package map's `data` name can be restored (ADR-0004)
+7 optionally anchor the `Edit(./data/**)` deny glob in `.claude/settings.json` so the package map's `data` name can
+be restored (ADR-0004)
+
+### Before the first release candidate, in this order
+1. `ACIS_ALLOW_SEALED_FETCH=1 uv run acis fetch --sealed` — populates the sealed area with the held-out labels
+   **and** the corpus/queries, and warms the datasets cache the offline run reads.
+2. `uv run python -m acis.eval.final --smoke` — proves the sealed cache loads the task with the network off.
+   **Do not skip this.** It is the one part of the official path that could not be executed here (no network, and
+   the labels are not ours to fetch), and its failure mode is a run that dies at data loading, before a single
+   vector is encoded. Minutes now, a wasted held-out touch otherwise.
+3. `make rc-official RC=RC0 MODE=B` — the run itself, in your own terminal, uninterrupted.
 
 ## Gate register
 | Gate | Status | Ledger run | Decision / frozen default |
 |---|---|---|---|
 | G0.0 hook canary | mechanism verified, owner sign-off pending | – | docs/PHASE0_REPORT.md §G0.0 |
-| G0.1 mteb toy contract | **PASS** | – | 42 contract tests on mteb 2.21.0 / 2.12.30 / 2.5.1 |
+| G0.1 mteb toy contract | **PASS** | – | 44 contract tests on mteb 2.21.0 / 2.12.30 / 2.5.1 |
 | G0.2 data audit | **PASS** | – | runs/dataset_audit.json; matches R-01; E-LONG not triggered |
 | G0.3 hardware + throughput | **PASS (dev host)** | – | runs/hardware.json: T-min, 157.6 GFLOP/s, no GPU |
-| G0.4 model radar + pin | deferred to Phase 2 | – | feeds G-M; needs weights + owner decision |
-| G0.5 zero-shot, all 5,000 dev queries | deferred to Phase 2 | – | feeds G-M; multi-hour per candidate |
-| G0.6 guard tests + physical seal | **PASS** | – | 180 security tests; seal clean; detector fixed for cache layouts |
+| G0.4 model radar + pin | deferred to Phase 2 (ADR-0005, proposed) | – | feeds G-M; needs weights + owner decision |
+| G0.5 zero-shot, all 5,000 dev queries | deferred to Phase 2 (ADR-0005, proposed) | – | feeds G-M; multi-hour per candidate |
+| G0.6 guard tests + physical seal | **PASS** | – | 194 security tests; seal clean; detector matches path components |
 | P1-B0 metric parity | **PASS** | – | equal to mteb/pytrec_eval at 1e-9, incl. graded/multi-relevant |
 | P1-B1 BM25 parity | **PASS** | `dev-8717922a9ca4`, `dev-ee395f07e048` | 100 % top-10 identical, 5,000 queries |
 | G-M encoder | pending | – | seed Qwen3-Embedding-0.6B; smallest within 1.0 pt (3.0 pt if best cold pass > 2 h) |
@@ -73,7 +83,23 @@ Toolchain lock (CPU-only torch) · `acis.core/sec/obs/appsdata/cli` · allow-lis
 `acis doctor` · `acis.eval` (metrics, splits + lock, decontamination, bootstrap, hash-chained ledger, guard, dev
 task, ladder, run files, verify-submission, official pipeline, `final`) · `acis.engine` with the **frozen**
 `SearchEngine` interface · `acis.prep/lexical/rank/embed` · `acis.mteb_adapter` (Modes A and B) · `acis.robust_hook`
-over a 256-document fixture · 506 tests + 3 pinned `xfail` guard-gap rows.
+over a 256-document fixture · 544 tests + 3 pinned `xfail` guard-gap rows.
+
+## Carry-forward into Phase 2 (not gate blockers, recorded so they are not lost)
+- **The sealed-cache repair has no end-to-end proof.** Its paths are now unit-tested offline
+  (`tests/unit/test_sealed_paths.py`), but the real fetch-and-load was impossible here. Treat the `--smoke` step
+  above as a **precondition for RC0**, not a nicety.
+- **Seal detection is defence-in-depth, not exhaustive.** `is_sealed_file` matches the repository and hub-cache
+  layouts; a HuggingFace *datasets* cache stores `…/<config>/0.0.0/<hash>/apps-test.arrow`, which it would not
+  recognise. The APPS labels really are `data/<split>-*.parquet`, so no live gap — but do not read the detector as
+  a guarantee. The boundary remains physical (D19).
+- **Every ledger row so far was written from a dirty tree** (dev runs are allowed to be; only official runs
+  refuse). From Phase 2 the bake-off rows feed G-M and G1 — require a clean tree for anything a gate quotes.
+- **B1 parity was measured stemmer-free on both sides** because PyStemmer is not installed, while the configs
+  declare `lexical.stemmer: english`. Fine as a harness check; decide before BM25 is used for anything more
+  (install PyStemmer and re-measure, or declare stemmer-free by choice).
+- **`configs/official.yaml` is a Phase 5 deliverable**, so `make rc-official`, `make reproduce` and
+  `make reproduce-cache` cannot run until then. The code paths behind them are exercised on a synthetic task.
 
 ## Next actions
 1. Owner: canary sign-off, the deferral decision for G0.4/G0.5, and the compute/deadline rows.

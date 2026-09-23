@@ -70,4 +70,9 @@ class SearchEngine(Protocol):
     ) -> dict[str, list[tuple[str, float]]]: ...
 
 
-__all__ = ["SearchEngine"]
+#: `docs/spec/07` calls this "the `AcisEngine` interface". `AcisEngine` is the implementation
+#: (`acis.engine.core`); `SearchEngine` is the Protocol it satisfies. The alias exists so that a Track B engineer
+#: grepping for the name the spec uses finds the frozen surface rather than only prose.
+AcisEngineProtocol = SearchEngine
+
+__all__ = ["AcisEngineProtocol", "SearchEngine"]

@@ -6,6 +6,6 @@ The public surface is frozen at the end of Phase 1 (`protocol.SearchEngine`); Tr
 from __future__ import annotations
 
 from acis.engine.core import AcisEngine, SnapshotData
-from acis.engine.protocol import SearchEngine
+from acis.engine.protocol import AcisEngineProtocol, SearchEngine
 
-__all__ = ["AcisEngine", "SearchEngine", "SnapshotData"]
+__all__ = ["AcisEngine", "AcisEngineProtocol", "SearchEngine", "SnapshotData"]

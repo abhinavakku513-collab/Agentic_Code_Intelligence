@@ -10,12 +10,12 @@ in this phase is a model-free stand-in encoder that a strict run refuses to serv
 |---|---|---|
 | Metrics equal mteb/pytrec_eval to 1e-9 on random, oracle and BM25 runs (B0) | **PASS** — max deviation 0.0 on every key | `tests/metamorphic/test_parity.py::test_b0_metrics_equal_mteb_and_pytrec_eval_to_1e9` |
 | BM25 parity ≥ 95 % top-10 identical (B1) | **PASS** — **100.0 %** top-10 *and* top-100 identical on all 5,000 dev queries; ΔNDCG@10 = 0.00e+00 | `[ledger:dev-8717922a9ca4]`, `[ledger:dev-ee395f07e048]`, `uv run acis eval parity`, `tests/metamorphic/test_parity.py::test_p2_bm25_parity_with_the_mteb_baseline` |
-| Split lock + sealed-data tests | **PASS** — lock written and re-verified; 33 seal tests green | `configs/splits.lock.json`, `tests/security/test_seal.py`, `tests/integration/test_dev_harness.py` |
-| Tie and dispatch contract tests green on the matrix | **PASS** — 42 contract tests green on mteb **2.21.0** (pinned), **2.12.30** and **2.5.1** | `tests/contract/`, `uv run --with mteb==<v> pytest tests/contract -q` |
+| Split lock + sealed-data tests | **PASS** — lock written and re-verified; the seal suite is green | `configs/splits.lock.json`, `tests/security/test_seal.py`, `tests/integration/test_dev_harness.py` |
+| Tie and dispatch contract tests green on the matrix | **PASS** — 44 contract tests green on mteb **2.21.0** (pinned), **2.12.30** and **2.5.1** | `tests/contract/`, `uv run --with mteb==<v> pytest tests/contract -q` |
 | Robustness library tests green **and** engine tests run | **PASS** — 37/37, of which 27 exercise the real engine through `acis.robust_hook` over a 256-document fixture | `tests/robustness/`, `tests/fixtures/robust_corpus.jsonl` |
-| `AcisEngine` interface frozen (Track B may start) | **DONE** — `acis.engine.protocol.SearchEngine`; changing a signature needs an ADR | `src/acis/engine/protocol.py`, `src/acis/engine/README.md` |
+| `AcisEngine` interface frozen (Track B may start) | **DONE** — `acis.engine.protocol.SearchEngine`, aliased `AcisEngineProtocol` for the name the spec uses; changing a signature needs an ADR | `src/acis/engine/protocol.py`, `src/acis/engine/README.md` |
 | Adapter v0 validated on dev **and** on a public non-APPS mteb code task | **PASS** in both modes — see below | `runs/reg_validation_mode{A,B}.json`, `tests/integration/test_dev_harness.py` |
-| `verify-submission` v0 | **PASS** — 20 tests, each breaking exactly one thing; a SKIP is never a pass | `tests/integration/test_verify_submission.py` |
+| `verify-submission` v0 | **PASS** — each test breaks exactly one thing; a SKIP is never counted as a pass | `tests/integration/test_verify_submission.py` |
 | Official script | **PASS** — the pipeline is executed end to end on a synthetic task (both modes, run files, manifest, ledger, checksums, verification); the *held-out* run stays the owner's, and refuses a non-sealed `HF_HOME`, a dirty tree or an exhausted budget | `src/acis/eval/official.py`, `tests/integration/test_official_dry_run.py`, `tests/security/test_seal.py` |
 | Not yet: dense encoder runtime, LTR, held-out evaluation | Honoured — `mode="hybrid"` raises rather than inventing an ungated fusion; the dense runtime is Phase 2 | `tests/unit/test_prep_and_engine.py::test_hybrid_mode_is_not_invented_before_its_gate` |
 

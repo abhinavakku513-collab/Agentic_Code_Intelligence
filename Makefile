@@ -21,7 +21,8 @@ gate:             ; @test -n "$(GATE)" || { echo "usage: make gate GATE=G1|G2|G3
 # OWNER-RUN (docs/spec/03 s5): the official run alone uses the sealed HF cache; cold, strict, uninterrupted.
 rc-official:
 	@test -n "$(RC)" || { echo "usage: make rc-official RC=RC0|RC1|RC2 [MODE=A|B|AB]"; exit 64; }
-	HF_HOME=$$HOME/.acis-sealed/hf HF_DATASETS_CACHE=$$HOME/.acis-sealed/hf/datasets HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+	SEAL=$${ACIS_SEALED_HOME:-$$HOME/.acis-sealed}; \
+	HF_HOME=$$SEAL/hf HF_DATASETS_CACHE=$$SEAL/hf/datasets HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
 	$(PY) acis eval official --rc $(RC) --mode $(or $(MODE),AB) --config configs/official.yaml --cold --strict
 
 # JUDGE QUICK START (README opens with expected runtimes per hardware tier)
