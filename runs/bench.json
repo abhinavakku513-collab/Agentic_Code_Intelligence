@@ -1,0 +1,31 @@
+{
+  "config": "configs/dev.yaml",
+  "config_hash": "f42272b7986b5667745e9d6d3491d3ea3aa15e17657a6a5141c783365429a92c",
+  "encoder": "acis/hashing-4096",
+  "latency_ms": {
+    "encode_query": {
+      "p50": 1.189,
+      "p95": 1.954,
+      "p99": 2.086
+    },
+    "search_cold_query": {
+      "p50": 9.257,
+      "p95": 14.993,
+      "p99": 17.592
+    },
+    "search_warm": {
+      "p50": 7.995,
+      "p95": 16.396,
+      "p99": 18.717
+    }
+  },
+  "ledger_run_id": "bench-b3586309bd8e",
+  "n_queries": 50,
+  "n_units": 8765,
+  "numeric_profile": "cpu-fp32",
+  "peak_rss_mb": 543.04,
+  "snapshot_build_seconds": 2.868,
+  "submission_capable": false,
+  "threads": 8,
+  "top_k": 10
+}
