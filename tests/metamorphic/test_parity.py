@@ -311,3 +311,33 @@ def test_b0_exact_ties_and_negative_scores_still_agree():
         ours, theirs = score_run(qrels, run, (10,)), score_run_reference(qrels, run, (10,))
         for key in ("ndcg_at_10", "mrr_at_10", "recall_at_10"):
             assert ours[key] == pytest.approx(theirs[key], abs=TOLERANCE), key
+
+
+# -- P8: the top-k cut is exact ---------------------------------------------------------------------------------
+def test_p8_the_top_k_cut_equals_the_full_ranking():
+    """The retrieval core ranks only what it returns. That is an optimisation, so it has to be *exactly* equal.
+
+    Ranking all 8,765 documents to answer a request for 10 was the dominant cost of the per-query path. The cut
+    keeps every document tied with the k-th best, so the fast answer and the full sort agree document for
+    document and score for score — including on the tie-heavy corpora where a careless cut goes wrong.
+    """
+    docs = _fixture_corpus()
+    _, queries = _qrels_and_queries(docs)
+    engine, snap = _engine(docs)
+    data = engine.snapshot_data(snap)
+    for text in list(queries.values())[:8]:
+        query, _ = engine.normalise_query(text)
+        full = engine._dense_ranking(data, query, k=None)
+        for k in (1, 3, 10, len(docs)):
+            assert engine._dense_ranking(data, query, k=k) == full[:k]
+
+
+def test_p8_a_corpus_of_identical_documents_still_cuts_exactly():
+    """Every score tied is the worst case for a partition-based cut: the tie-break alone decides every rank."""
+    docs = [(f"d{i}", "identical body text") for i in range(40)]
+    engine, snap = _engine(docs)
+    data = engine.snapshot_data(snap)
+    query, _ = engine.normalise_query("identical body text")
+    full = engine._dense_ranking(data, query, k=None)
+    for k in (1, 5, 39, 40):
+        assert engine._dense_ranking(data, query, k=k) == full[:k]

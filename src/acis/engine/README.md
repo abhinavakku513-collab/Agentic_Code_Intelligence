@@ -17,6 +17,7 @@ it, and changing a signature needs an ADR.
 | N-7 | Only VALID snapshots are searchable unless `allow_partial=True` | INV-9 | `tests/unit/test_prep_and_engine.py` |
 | N-8 | `agent_calls == 0`: there is no agent on this path | INV-13 | `tests/unit/test_prep_and_engine.py` |
 | N-9 | Arbitrary queries never crash: empty raises `InvalidInput`, over-long is head+tail truncated, hostile input returns a ranking | INV-15 | `tests/robustness/test_query_agnostic.py` |
+| N-11 | The retrieval core ranks only what it returns: the top-`k` cut keeps every document tied with the k-th best, so it equals the full ranking document for document | INV-4, INV-10 | `tests/metamorphic/test_parity.py` (P8) |
 | N-10 | The route reaches the encoder **and** the query-vector cache key, so two routes are two vectors of the same text | INV-15, INV-2 | `tests/unit/test_dense_wiring.py` |
 
 **Phase boundaries.** Channel fusion is decided by gate G2 in Phase 4, so `mode="hybrid"` raises `NotReady` rather

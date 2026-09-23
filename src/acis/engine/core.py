@@ -289,12 +289,38 @@ class AcisEngine:
         return vector
 
     # -- channels ------------------------------------------------------------------------------------------------
-    def _dense_ranking(self, data: SnapshotData, query: str, *, route: str = "generic") -> list[tuple[str, float]]:
+    def _dense_ranking(
+        self, data: SnapshotData, query: str, *, route: str = "generic", k: int | None = None
+    ) -> list[tuple[str, float]]:
+        """The dense channel's top-`k`, already in final order. `k=None` ranks the whole snapshot."""
         if data.vectors is None or self.encoder is None:
             raise NotReady("the dense channel is not available for this snapshot")
         vector = self._query_vector(data.snapshot.snapshot_id, query, route=route)
         scores = exact_search(vector.reshape(1, -1), data.vectors)[0]
-        return self._stable_order(data, [(doc_id, float(scores[i])) for i, doc_id in enumerate(data.doc_ids)])
+        return self._stable_top_k(data, scores, data.size if k is None else k)
+
+    @classmethod
+    def _stable_top_k(cls, data: SnapshotData, scores: np.ndarray, k: int) -> list[tuple[str, float]]:
+        """The `k` best documents in `_stable_order` order, without ordering the other 8,755 of them.
+
+        Sorting the whole corpus per query is the single most expensive thing the retrieval core did, and almost
+        all of it was thrown away: a request for 10 results does not need ranks 11 to 8,765 in order. The cut is
+        exact rather than approximate — the threshold is the k-th best score and *every* document that matches it
+        is sorted, so a tie at the boundary cannot be dropped on a technicality and the answer is identical to
+        the full sort (pinned by a metamorphic test, not by inspection).
+        """
+        n = int(scores.shape[0])
+        k = max(0, min(int(k), n))
+        if k == 0:
+            return []
+        if k < n:
+            window = np.argpartition(-scores, k - 1)[:k]
+            threshold = float(scores[window].min())
+            indices = np.flatnonzero(scores >= threshold)
+        else:
+            indices = np.arange(n)
+        ranking = [(data.doc_ids[i], float(scores[i])) for i in indices.tolist()]
+        return cls._stable_order(data, ranking)[:k]
 
     @staticmethod
     def _stable_order(data: SnapshotData, ranking: Sequence[tuple[str, float]]) -> list[tuple[str, float]]:
@@ -365,8 +391,12 @@ class AcisEngine:
         dense_available, _ = self._channels()
         sink = counters if counters is not None else self.counters
 
+        want = min(top_k, data.size)
+        ordered = False
         if mode in ("auto", "dense") and dense_available:
-            ranking = self._dense_ranking(data, query, route=route)
+            # The dense channel returns its top-`want` already in final order, so nothing below re-sorts it.
+            ranking = self._dense_ranking(data, query, route=route, k=want)
+            ordered = True
         elif mode == "dense":
             raise NotReady("dense channel requested but no encoder is configured")
         elif mode == "lexical":
@@ -377,9 +407,10 @@ class AcisEngine:
             degradation("dense_unavailable", "lexical-only ranking", strict=strict, counters=sink)
             ranking = self._lexical_ranking(data, query, data.size)
 
-        if len(ranking) < min(top_k, data.size):
-            ranking = self._extend_with_unretrieved(data, ranking, min(top_k, data.size))
-        return self._stable_order(data, ranking)[:top_k]
+        if len(ranking) < want:
+            ranking = self._extend_with_unretrieved(data, ranking, want)
+            ordered = False
+        return (ranking if ordered else self._stable_order(data, ranking))[:top_k]
 
     @staticmethod
     def _extend_with_unretrieved(
