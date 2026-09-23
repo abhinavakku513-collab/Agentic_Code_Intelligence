@@ -12,7 +12,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from acis.core.errors import InvalidInput
+from acis.lexical.codetok import tokenize_code
 from acis.lexical.tokenize import english_stopwords, load_stemmer, tokenize
+
+#: The two lexical front ends. The query side must use the same one as the corpus, which is why it is a property
+#: of the index rather than an argument at search time.
+TOKENIZERS = {"stock": tokenize, "code": tokenize_code}
 
 DEFAULT_K1 = 1.5
 DEFAULT_B = 0.75
@@ -30,6 +35,8 @@ class Bm25Index:
     delta: float = DEFAULT_DELTA
     method: str = DEFAULT_METHOD
     stemmer_language: str | None = "english"
+    #: `stock` is the mteb-matched tokenisation parity P2 pins; `code` is the code-aware one gate G2 decides on.
+    tokenizer: str = "stock"
     #: True when the whole corpus tokenised to nothing — a real corpus of punctuation, numbers or stopwords.
     vocabulary_empty: bool = False
     _retriever: Any = field(default=None, repr=False)
@@ -51,14 +58,17 @@ class Bm25Index:
         delta: float = DEFAULT_DELTA,
         method: str = DEFAULT_METHOD,
         stemmer_language: str | None = "english",
+        tokenizer: str = "stock",
     ) -> Bm25Index:
         import bm25s  # noqa: PLC0415
 
         if len(doc_ids) != len(texts):
             raise InvalidInput("doc_ids and texts must have the same length", n_ids=len(doc_ids), n_texts=len(texts))
+        if tokenizer not in TOKENIZERS:
+            raise InvalidInput(f"unknown lexical tokenizer {tokenizer!r}", known=list(TOKENIZERS))
         stopwords = english_stopwords()
         stemmer = load_stemmer(stemmer_language)
-        encoded = tokenize(texts, stopwords=stopwords, stemmer=stemmer)
+        encoded = TOKENIZERS[tokenizer](texts, stopwords=stopwords, stemmer=stemmer)
         # A corpus can tokenise to nothing — punctuation, bare numbers, stopwords only. bm25s raises from inside
         # its own vocabulary construction when that happens, so the case is caught here and becomes an index that
         # matches nothing. The lexical channel is then empty for that snapshot, which the snapshot records; the
@@ -75,6 +85,7 @@ class Bm25Index:
             delta=delta,
             method=method,
             stemmer_language=stemmer_language,
+            tokenizer=tokenizer,
             vocabulary_empty=empty,
             _retriever=retriever,
             _stopwords=stopwords,
@@ -90,7 +101,7 @@ class Bm25Index:
         if self._retriever is None:
             raise InvalidInput("index has not been built")
         k = max(1, min(int(k), self.size))
-        encoded = tokenize(list(queries), stopwords=self._stopwords, stemmer=self._stemmer)
+        encoded = TOKENIZERS[self.tokenizer](list(queries), stopwords=self._stopwords, stemmer=self._stemmer)
         indices, scores = self._retriever.retrieve(encoded, k=k, show_progress=False)
         out: list[list[tuple[str, float]]] = []
         for row_idx, row_scores in zip(indices, scores, strict=True):
@@ -102,4 +113,4 @@ class Bm25Index:
         return self.retrieve([query], k)[0] if self.size else []
 
 
-__all__ = ["DEFAULT_B", "DEFAULT_DELTA", "DEFAULT_K1", "DEFAULT_METHOD", "Bm25Index"]
+__all__ = ["DEFAULT_B", "DEFAULT_DELTA", "DEFAULT_K1", "DEFAULT_METHOD", "TOKENIZERS", "Bm25Index"]

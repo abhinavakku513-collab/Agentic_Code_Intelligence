@@ -176,6 +176,7 @@ class AcisEngine(VersionedEngineMixin):
             k1=float(self.config.get("lexical.k1", 1.5)),
             b=float(self.config.get("lexical.b", 0.75)),
             stemmer_language=self.config.get("lexical.stemmer", "english"),
+            tokenizer=str(self.config.get("lexical.tokenizer", "stock")),
         )
         vectors = self._embed_documents([store[h] for h in body_hashes]) if self.encoder is not None else None
         missing: tuple[str, ...] = () if vectors is not None else ("dense",)

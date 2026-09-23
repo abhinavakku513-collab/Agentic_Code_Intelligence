@@ -325,6 +325,7 @@ class VersionedEngineMixin:
             k1=float(self.config.get("lexical.k1", 1.5)),  # type: ignore[attr-defined]
             b=float(self.config.get("lexical.b", 0.75)),  # type: ignore[attr-defined]
             stemmer_language=self.config.get("lexical.stemmer", "english"),  # type: ignore[attr-defined]
+            tokenizer=str(self.config.get("lexical.tokenizer", "stock")),  # type: ignore[attr-defined]
         )
 
         vectors = None
