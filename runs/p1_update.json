@@ -1,0 +1,66 @@
+{
+  "config": "configs/dev.yaml",
+  "config_hash": "f42272b7986b5667745e9d6d3491d3ea3aa15e17657a6a5141c783365429a92c",
+  "encoder": "acis/hashing-4096",
+  "first_build_seconds": 9.229,
+  "ledger_run_id": "bench-9153e49050de",
+  "n_units": 2000,
+  "numeric_profile": "cpu-fp32",
+  "peak_rss_mb": 419.45,
+  "raw_seconds": {
+    "change_1": [
+      1.921,
+      1.761,
+      1.914,
+      1.8938,
+      1.9544
+    ],
+    "change_10": [
+      1.9489,
+      1.8494,
+      1.8812,
+      1.8876,
+      1.9533
+    ],
+    "change_100": [
+      2.3737,
+      2.3486,
+      2.2675,
+      2.3548,
+      2.2862
+    ],
+    "full_rebuild": [
+      10.9409,
+      10.8624,
+      10.4515,
+      10.9288,
+      11.2659
+    ]
+  },
+  "repeats": 5,
+  "seconds": {
+    "change_1": {
+      "p50": 1913.966,
+      "p95": 1954.36,
+      "p99": 1954.36
+    },
+    "change_10": {
+      "p50": 1887.565,
+      "p95": 1953.321,
+      "p99": 1953.321
+    },
+    "change_100": {
+      "p50": 2348.595,
+      "p95": 2373.735,
+      "p99": 2373.735
+    },
+    "full_rebuild": {
+      "p50": 10928.841,
+      "p95": 11265.88,
+      "p99": 11265.88
+    }
+  },
+  "seed": 0,
+  "submission_capable": false,
+  "target_seconds": 30.0
+}
