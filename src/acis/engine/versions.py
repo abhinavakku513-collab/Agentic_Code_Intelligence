@@ -243,10 +243,13 @@ class VersionedEngineMixin:
         )
 
     def _ensure_vectors(self, repo_id: str, snapshot_id: str, store: BlobStore) -> int:
-        """Embed a snapshot's units and write the matrix beside it. Returns how many needed a forward pass.
+        """Embed a snapshot's units and write the matrix beside it. Returns how many were actually embedded.
 
-        The count is the honest one: it comes from the encoder's own counter, so a body that was embedded for an
-        earlier version — or for another repository — is reported as reused rather than as work.
+        **Only unseen bodies are embedded** (D11). A unit whose body hash already appeared in the snapshot this
+        one supersedes has its row copied, so a ten-unit commit against a ten-thousand-unit corpus embeds ten
+        units — not ten thousand with a warm cache. That is the difference between an incremental build and a
+        full rebuild that happens to be cheap, and it holds for every encoder, including one with no cache of
+        its own.
         """
         encoder = getattr(self, "encoder", None)
         path = layout.snapshot_dir(repo_id, snapshot_id) / VECTORS_FILE
@@ -254,10 +257,22 @@ class VersionedEngineMixin:
             return 0
 
         units = snapshots.read_units(repo_id, snapshot_id)
-        texts = [store.get(u.body_hash) for u in units]
-        before = int(getattr(encoder, "rows_encoded", 0))
-        vectors = self._embed_documents(texts)  # type: ignore[attr-defined]
-        after = int(getattr(encoder, "rows_encoded", 0))
+        known = self._previous_rows(repo_id, snapshot_id)
+        pending = [i for i, u in enumerate(units) if u.body_hash not in known]
+
+        fresh: np.ndarray | None = None
+        if pending:
+            texts = [store.get(units[i].body_hash) for i in pending]
+            fresh = np.asarray(self._embed_documents(texts), dtype=np.float32)  # type: ignore[attr-defined]
+
+        width = int(fresh.shape[1]) if fresh is not None else int(next(iter(known.values())).shape[0])
+        vectors = np.zeros((len(units), width), dtype=np.float32)
+        for position, index in enumerate(pending):
+            assert fresh is not None
+            vectors[index] = fresh[position]
+        for index, unit in enumerate(units):
+            if unit.body_hash in known:
+                vectors[index] = known[unit.body_hash]
 
         # Written atomically beside an already-sealed snapshot: the manifest and the marker cover the *content*,
         # and a half-written matrix would otherwise be indistinguishable from a complete one.
@@ -269,7 +284,28 @@ class VersionedEngineMixin:
             fh.flush()
             os.fsync(fh.fileno())
         tmp.replace(path)
-        return (after - before) if after > before else (0 if after else len(units))
+        return len(pending)
+
+    def _previous_rows(self, repo_id: str, snapshot_id: str) -> dict[str, np.ndarray]:
+        """Vectors from the snapshot this one supersedes, keyed by body hash.
+
+        The *active* snapshot is the right source: it is the version a new one is built on top of, it is already
+        validated, and its matrix is already on disk. A body that appears in it needs no forward pass here.
+        """
+        previous = snapshots.active_snapshot_id(repo_id)
+        if not previous or previous == snapshot_id:
+            return {}
+        path = layout.snapshot_dir(repo_id, previous) / VECTORS_FILE
+        if not path.is_file():
+            return {}
+        try:
+            matrix = np.load(path, mmap_mode="r")
+            units = snapshots.read_units(repo_id, previous)
+        except (OSError, ValueError):
+            return {}  # an unreadable predecessor is a reason to embed, never a reason to fail
+        if int(matrix.shape[0]) != len(units):
+            return {}
+        return {u.body_hash: np.asarray(matrix[u.ordinal], dtype=np.float32) for u in units}
 
     def _load_snapshot(self, repo_id: str, snapshot_id: str, *, label: str) -> SnapshotData:
         from acis.engine.core import SnapshotData  # noqa: PLC0415 — the seam, not a cycle in practice

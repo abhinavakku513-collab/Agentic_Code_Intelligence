@@ -214,3 +214,48 @@ def test_a_new_engine_serves_what_a_previous_one_built(repo):
     fresh = engine()
     assert sorted(keys(search(fresh, "v2", "anything", top_k=50))) == sorted(V2)
     assert [v["label"] for v in fresh.versions("demo")] == ["v1", "v2", "v3"]
+
+
+# -- incremental embedding ---------------------------------------------------------------------------------------
+def test_only_changed_units_are_embedded(repo, monkeypatch):
+    """D11: a ten-unit commit embeds ten units, not the whole corpus with a warm cache.
+
+    With a real encoder the difference is minutes; with the stand-in it is milliseconds, which is exactly why it
+    is asserted as a *count* rather than as a duration.
+    """
+    from acis.embed.hashing import HashingEncoder
+
+    embedded: list[int] = []
+    original = HashingEncoder.encode
+
+    def counting(self, texts, **kw):
+        embedded.append(len(texts))
+        return original(self, texts, **kw)
+
+    monkeypatch.setattr(HashingEncoder, "encode", counting)
+    v4 = {**V3, "extra.py": "def extra():\n    return 4\n"}
+    repo.update_version("demo", memory_source({"v4": v4}))
+
+    assert sum(embedded) == 1, f"embedded {sum(embedded)} units for a one-unit change"
+
+
+def test_a_rebuilt_snapshot_is_bit_identical_whether_rows_were_copied_or_embedded(tmp_path, monkeypatch):
+    """Copying a row from the previous snapshot must produce exactly what embedding it again would."""
+    import numpy as np
+
+    from acis.engine.versions import VECTORS_FILE
+    from acis.store import layout
+
+    incremental = engine()
+    incremental.ingest(memory_source({"v1": V1, "v2": V2}), repo_id="demo")
+    incremental_id = incremental.versions("demo")[-1]["snapshot_id"]
+    reused = np.load(layout.snapshot_dir("demo", incremental_id) / VECTORS_FILE)
+
+    monkeypatch.setenv("ACIS_HOME", str(tmp_path / "scratch"))
+    scratch = engine()
+    scratch.ingest(memory_source({"v2": V2}), repo_id="demo")
+    scratch_id = scratch.versions("demo")[-1]["snapshot_id"]
+    embedded = np.load(layout.snapshot_dir("demo", scratch_id) / VECTORS_FILE)
+
+    assert incremental_id == scratch_id
+    np.testing.assert_array_equal(reused, embedded)
