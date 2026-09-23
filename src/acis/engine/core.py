@@ -413,6 +413,7 @@ class AcisEngine(VersionedEngineMixin):
         pool = cand.union(dense_order, lexical_order, dense_k=dense_k, lexical_k=lexical_k, cap=union_cap)
         if not pool:
             return dense_order[:want]
+        pool = self._with_prf(data, query, route=route, pool=pool)
 
         qf = query_features(query)
         bridge = {c.doc_id: bridge_features(qf, data.features_of(c.doc_id)) for c in pool}
@@ -445,6 +446,43 @@ class AcisEngine(VersionedEngineMixin):
         ordered = head + tail
         floor = -float(len(ordered))
         return [(doc, floor + float(len(ordered) - i)) for i, doc in enumerate(ordered[:want])]
+
+    def _with_prf(self, data: SnapshotData, query: str, *, route: str, pool: Sequence[Any]) -> list[Any]:
+        """Add the second-pass score and rank as **features**, never as the ranking itself (spec 02 §4 stage 5).
+
+        Feedback helps when the top of the first pass is right and hurts when it is wrong, so it is off until
+        gate G4 says otherwise — and even then it feeds the ranker rather than replacing it, which is the whole
+        reason the second-pass score is a feature in the first place.
+        """
+        from dataclasses import replace as _replace  # noqa: PLC0415
+
+        settings = self.config.section("retrieve").get("prf", {})
+        if not settings or not settings.get("enabled") or data.vectors is None:
+            return list(pool)
+
+        from acis.rank.prf import DEFAULT_ALPHA, DEFAULT_M, expand  # noqa: PLC0415
+
+        vector = self._query_vector(data.snapshot.snapshot_id, query, route=route)
+        index_of = {doc_id: i for i, doc_id in enumerate(data.doc_ids)}
+        first = [(index_of[c.doc_id], float(c.dense_score)) for c in pool if c.dense_score == c.dense_score]
+        first.sort(key=lambda item: -item[1])
+        _, scores = expand(
+            vector,
+            data.vectors,
+            first,
+            m=int(settings.get("m", DEFAULT_M)),
+            alpha=float(settings.get("alpha", DEFAULT_ALPHA)),
+        )
+        if scores.size == 0:
+            return list(pool)
+
+        order = {
+            doc: rank
+            for rank, doc in enumerate(
+                sorted((c.doc_id for c in pool), key=lambda d: -float(scores[index_of[d]])), start=1
+            )
+        }
+        return [_replace(c, prf_score=float(scores[index_of[c.doc_id]]), prf_rank=order[c.doc_id]) for c in pool]
 
     @staticmethod
     def _rrf_order(pool: Sequence[Any]) -> list[str]:
