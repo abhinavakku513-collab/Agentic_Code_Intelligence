@@ -1,8 +1,8 @@
 # ACIS status — single source of progress truth (updated only by /phase-gate on PASS)
 kit_version: 1.1 (ADR-0001…0004)
-current_phase: 1            # Harness and contracts — built and verified; the formal gate needs the owner actions below
-phase_state: gate-pending   # not-started | in-progress | gate-pending | done
-last_gate: none             # no phase gate has been recorded as PASS yet
+current_phase: 2            # Dense engine and bake-off — started on the owner's explicit instruction
+phase_state: in-progress    # not-started | in-progress | gate-pending | done
+last_gate: none             # NO phase gate has been recorded as PASS yet — see the note directly below
 deadline: undeclared        # OWNER: put the real date here; work backwards from docs/TRIAGE.md floors F0–F4
 hook_canary: mechanism-verified, owner sign-off pending   # see docs/PHASE0_REPORT.md §G0.0
 test_touch_used: 0 of 6     # RC0 x1, RC1 x2 (A+B), contingency x2, post-hoc clean-pool x1
@@ -11,7 +11,21 @@ compute: undeclared         # OWNER: dev cores/RAM · GPU access + hours (Colab/
 faq: received 2026-09-20 (docs/official/FAQ.md) · organizer answers: none yet (docs/official/ORGANIZER_QA.md)
 scope: PPT and demo video are owner-made (docs/submission/OWNER_HANDOFF.md)
 
-## Why the phase gate is not recorded as PASS
+## Phase 2 started without a recorded gate — deliberately, on the owner's instruction
+Phase 1 is built and independently verified (an external gatekeeper re-derived every acceptance row), but its gate
+cannot be *recorded* until the owner acts, and the owner chose to proceed rather than wait. This is a departure
+from CLAUDE.md §5 and it is written down here rather than left implicit.
+
+What that costs: Phase 2 decisions (G-M, G1) will be taken against a Phase 1 whose gate row says `none`. If the
+owner's canary run later reveals a hook problem, work done after this point is the work that has to be re-examined.
+Nothing else is affected — the harness evidence stands on its own, and the held-out touch counter is still 0 of 6.
+
+**Also blocking in practice:** this sandbox currently has no network, so model weights cannot be downloaded.
+G0.4/G0.5 and the G-M bake-off therefore cannot run here. Phase 2 work proceeds on the parts that need no weights
+(encoder runtime, vector cache, model registry, batching, the bake-off harness itself), each behind an interface a
+real encoder plugs into, so the measurement passes can run unchanged the moment weights are available.
+
+## Why the Phase 1 gate is not recorded as PASS
 The Phase 1 build and its acceptance criteria are complete and independently verified (docs/PHASE1_REPORT.md), but
 `/phase-gate` may only write a PASS when its predecessor has one, and Phase 0 needs three owner actions that this
 tool cannot perform or sign for:
