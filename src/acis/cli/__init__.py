@@ -54,6 +54,9 @@ def _add_eval(sub: argparse._SubParsersAction) -> None:
     gate.add_argument("--models", default="", help="G-M: comma-separated card keys to measure (default: all cards)")
     gate.add_argument("--reference", default="", help="G-M: card keys measured for reference, never selected")
     gate.add_argument("--limit", type=int, default=0, help="first N dev queries (0 = all 5,000; a gate needs all)")
+    gate.add_argument("--route", default="generic", help="G1: the route being decided (INV-15: one at a time)")
+    gate.add_argument("--cells", default="", help="G1: comma-separated cells, e.g. T1/V0/1024,T3/V1/512")
+    gate.add_argument("--baseline", default="T1/V0/1024", help="G1: the incumbent cell a change has to beat")
     gate.add_argument(
         "--record", action="store_true", help="write the decision to configs/gates/<id>.yaml (written once)"
     )

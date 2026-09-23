@@ -14,7 +14,7 @@ Three rules this module exists to enforce:
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -47,13 +47,36 @@ class ModelCard:
     max_tokens: int
     trust_remote_code: bool = False
     file_sha256: Mapping[str, str] = field(default_factory=dict)
+    #: Which task key each route uses, when gate G1 has decided one. Empty means the D4 default mapping below.
+    route_tasks: Mapping[str, str] = field(default_factory=dict)
 
     # -- instruction formatting ---------------------------------------------------------------------------------
+    def task_key_for(self, route: str) -> str:
+        """The task *key* a route uses: G1's choice when there is one, else the D4 default (INV-15).
+
+        The default is deliberately conservative: only `statement_like` gets the APPS-tuned instruction, and
+        everything else — including any route we have never seen — gets the generic one.
+        """
+        chosen = self.route_tasks.get(route)
+        if chosen:
+            return str(chosen)
+        return STATEMENT_TASK if route == "statement_like" else GENERIC_TASK
+
     def task_string(self, route: str) -> str:
         """The task description for a route. Unknown routes fall back to the generic one (INV-15)."""
-        key = STATEMENT_TASK if route == "statement_like" else GENERIC_TASK
-        task = self.tasks.get(key) or self.tasks.get(GENERIC_TASK) or ""
+        task = self.tasks.get(self.task_key_for(route)) or self.tasks.get(GENERIC_TASK) or ""
         return str(task)
+
+    def with_route_task(self, route: str, task_key: str) -> ModelCard:
+        """A copy that encodes `route` with `task_key` — how the G1 sweep varies the instruction.
+
+        The task *strings* still come from the card (D4); the sweep only chooses which of them a route uses.
+        """
+        if task_key not in self.tasks:
+            raise InvalidInput(
+                f"model card {self.key!r} has no task {task_key!r}", known=sorted(self.tasks), route=route
+            )
+        return replace(self, route_tasks={**dict(self.route_tasks), route: task_key})
 
     def format_query(self, text: str, *, route: str = "generic") -> str:
         """Render a query in the model's documented input format.
@@ -88,6 +111,7 @@ class ModelCard:
                 "query_template": self.query_template,
                 "document_template": self.document_template,
                 "tasks": dict(self.tasks),
+                "route_tasks": dict(self.route_tasks),
                 "max_tokens": self.max_tokens,
             }
         )
@@ -134,6 +158,7 @@ def load_card(key: str) -> ModelCard:
         max_tokens=int(raw.get("max_tokens", DEFAULT_MAX_TOKENS)),
         trust_remote_code=False,
         file_sha256={str(k): str(v) for k, v in (raw.get("file_sha256") or {}).items()},
+        route_tasks={str(k): str(v) for k, v in (raw.get("route_tasks") or {}).items()},
     )
 
 

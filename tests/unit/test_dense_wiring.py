@@ -169,6 +169,43 @@ def test_an_unknown_view_is_refused_rather_than_silently_becoming_v0():
         encode_views(HashingEncoder(dim=8), ["x"], views=("V9",))
 
 
+# -- which task string a route uses (the G1 dimension) ---------------------------------------------------------
+def test_a_route_uses_the_conservative_default_until_g1_decides():
+    """Only `statement_like` gets the APPS-tuned instruction; every other route, known or not, gets generic."""
+    from acis.embed.registry import load_card
+
+    card = load_card("qwen3-embedding-0.6b")
+    assert card.task_key_for("statement_like") == "T1"
+    assert card.task_key_for("generic") == "T3"
+    assert card.task_key_for("a-route-we-have-never-seen") == "T3"
+
+
+def test_g1_can_point_one_route_at_another_task_without_touching_the_other():
+    from acis.embed.registry import load_card
+
+    card = load_card("qwen3-embedding-0.6b").with_route_task("statement_like", "T2")
+    assert card.task_key_for("statement_like") == "T2"
+    assert card.task_key_for("generic") == "T3"  # untouched
+    assert "competitive programming" in card.format_query("find code", route="statement_like")
+
+
+def test_a_task_the_card_does_not_define_is_refused():
+    """The sweep chooses among the card's task strings; it never invents one (D4)."""
+    from acis.core.errors import InvalidInput
+    from acis.embed.registry import load_card
+
+    with pytest.raises(InvalidInput, match="no task"):
+        load_card("qwen3-embedding-0.6b").with_route_task("generic", "T9")
+
+
+def test_changing_a_routes_task_changes_the_cards_fingerprint():
+    """Two sweep cells must not serve each other's cached query vectors."""
+    from acis.embed.registry import load_card
+
+    card = load_card("qwen3-embedding-0.6b")
+    assert card.with_route_task("generic", "T1").fingerprint != card.fingerprint
+
+
 # -- the adapter uses the same factory -------------------------------------------------------------------------
 def test_mode_b_encodes_through_the_configured_encoder_not_a_hard_coded_one():
     """Mode A and Mode B must share one model, or G-AB compares two systems instead of two surfaces."""

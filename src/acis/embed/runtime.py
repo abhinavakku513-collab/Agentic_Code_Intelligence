@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -192,6 +192,14 @@ class EncoderRuntime:
                 "profile": self.profile,
             }
         )
+
+    def with_route_task(self, route: str, task_key: str) -> EncoderRuntime:
+        """A runtime that encodes `route` with a different task string — what the G1 sweep varies.
+
+        The backend and the cache are shared, but the fingerprint moves with the card, so the two variants cannot
+        serve each other's cached vectors.
+        """
+        return replace(self, card=self.card.with_route_task(route, task_key))
 
     # -- encoding -------------------------------------------------------------------------------------------
     def _render(self, text: str, *, is_query: bool, route: str) -> str:

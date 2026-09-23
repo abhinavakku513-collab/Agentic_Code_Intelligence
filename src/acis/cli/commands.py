@@ -245,6 +245,8 @@ def _eval_parity(args: argparse.Namespace) -> int:
 def _eval_gate(args: argparse.Namespace) -> int:
     if args.gate.upper() in ("G-M", "GM"):
         return _gate_m(args)
+    if args.gate.upper() == "G1":
+        return _gate_1(args)
     print(
         f"gate {args.gate}: the gate procedures are declared in configs/gates/ and run from Phase 2 onwards "
         "(docs/spec/03 §7). Phase 1 ships the statistics they use: acis.eval.bootstrap.",
@@ -279,6 +281,39 @@ def _gate_m(args: argparse.Namespace) -> int:
             raise InvalidInput("a gate decision needs all 5,000 dev queries (docs/spec/09 §2)", measured_on=measured_on)
         print(f"wrote {record_decision(decision)}")
     return 0
+
+
+def _gate_1(args: argparse.Namespace) -> int:
+    """The query-representation sweep, for one route: task string x view x truncation length.
+
+    The grid is a product, so it is measured for the route named by `--route` rather than for all of them at once
+    — a route is a separate decision (INV-15) and a separate afternoon of compute.
+    """
+    from acis.appsdata import apps
+    from acis.eval.ladder import FULL_DEV_POOL
+    from acis.eval.sweep import Cell, default_grid, record_decision, render_table, run_g1
+
+    cells = [Cell(*_parse_cell(c)) for c in args.cells.split(",") if c.strip()] if args.cells else default_grid()
+    ids = list(apps.dev_query_ids())
+    if args.limit > 0:
+        ids = ids[: args.limit]
+
+    measurements, decision = run_g1(args.route, query_ids=ids, grid=cells, baseline=args.baseline)
+    print(render_table(measurements, decision))
+    print(f"\nwinner={decision.winner}  adopted={decision.adopted}  n={decision.n_queries}")
+    if args.record:
+        if len(ids) < FULL_DEV_POOL:
+            raise InvalidInput("a gate decision needs all 5,000 dev queries (docs/spec/09 §2)", measured_on=len(ids))
+        print(f"wrote {record_decision(decision)}")
+    return 0
+
+
+def _parse_cell(text: str) -> tuple[str, str, int]:
+    """`T1/V0/1024` -> the three dimensions G1 sweeps."""
+    parts = text.strip().split("/")
+    if len(parts) != 3:
+        raise InvalidInput(f"a cell is task/view/length, e.g. T1/V0/1024 (got {text!r})")
+    return parts[0], parts[1], int(parts[2])
 
 
 def _eval_robustness(args: argparse.Namespace) -> int:
