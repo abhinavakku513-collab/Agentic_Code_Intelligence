@@ -14,6 +14,8 @@ None of it needs weights: the stand-in and a recording fake exercise every path.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -207,10 +209,21 @@ def test_changing_a_routes_task_changes_the_cards_fingerprint():
 
 
 # -- the adapter uses the same factory -------------------------------------------------------------------------
-def test_mode_b_encodes_through_the_configured_encoder_not_a_hard_coded_one():
-    """Mode A and Mode B must share one model, or G-AB compares two systems instead of two surfaces."""
+def test_mode_b_encodes_through_the_configured_encoder_not_a_hard_coded_one(tmp_path):
+    """Mode A and Mode B must share one model, or G-AB compares two systems instead of two surfaces.
+
+    Asserted against the *configured* encoder rather than the dev default: the default is the G-M winner now, and
+    a unit test that needed 300 MB of weights on disk would be testing the filesystem.
+    """
+    import yaml
+
     from acis.mteb_adapter import PrePostPipelineEncoder
 
-    model = PrePostPipelineEncoder(config_path="configs/dev.yaml")
+    config = yaml.safe_load(Path("configs/dev.yaml").read_text(encoding="utf-8"))
+    config["model"] = {**config["model"], "encoder": "hashing", "dim": 64}
+    path = tmp_path / "standin.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    model = PrePostPipelineEncoder(config_path=str(path))
     assert model.engine.encoder is not None
     assert model.engine.encoder.fingerprint == factory.build_encoder(model.cfg).fingerprint

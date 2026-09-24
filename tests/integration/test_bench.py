@@ -26,7 +26,17 @@ def report(tmp_path_factory):
     out = tmp_path_factory.mktemp("bench") / "bench.json"
     before = len(ledger.read_rows())
     result = subprocess.run(
-        [sys.executable, "scripts/bench/run.py", "--queries", "3", "--no-ledger", "--out", str(out)],
+        [
+            sys.executable,
+            "scripts/bench/run.py",
+            "--queries",
+            "3",
+            "--no-ledger",
+            "--config",
+            "configs/dev-standin.yaml",
+            "--out",
+            str(out),
+        ],
         cwd=acis_root(),
         capture_output=True,
         text=True,

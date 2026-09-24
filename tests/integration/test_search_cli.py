@@ -26,7 +26,7 @@ def payload():
     """One snapshot build, shared: 8,765 documents is not something to do once per assertion."""
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
-        code = main(["search", QUERY, "--top-k", "5", "--json"])
+        code = main(["search", QUERY, "--top-k", "5", "--json", "--config", "configs/dev-standin.yaml"])
     assert code == 0
     return json.loads(buffer.getvalue())
 

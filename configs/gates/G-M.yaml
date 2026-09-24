@@ -1,9 +1,43 @@
 # Encoder-selection gate (D4). Decided by `make gate GATE=G-M`; do not edit after a decision — supersede via /adr.
-status: undecided
-size_tolerance_pts: 1.0        # smallest candidate within this many NDCG@10 points of the best
-slow_pass_hours: 2.0           # if the best candidate's projected cold pass on the declared host exceeds this ...
-slow_tolerance_pts: 3.0        # ... use this tolerance instead [JUDGMENT; revisit when organizers publish weights]
-slo_cold_pass_hours: 4.0       # hard cap
-envelope: {max_params_b: 1.0, cpu_capable: true, permissive_licence: true, safetensors: true, trust_remote_code: false, api: false}
-decision: null
-evidence: null                 # [ledger:<run_id>]
+status: decided
+size_tolerance_pts: 1.0
+slow_pass_hours: 2.0
+slow_tolerance_pts: 3.0
+slo_cold_pass_hours: 4.0
+envelope:
+  max_params_b: 1.0
+  cpu_capable: true
+  permissive_licence: true
+  safetensors: true
+  trust_remote_code: false
+  api: false
+decision: gte-modernbert-base
+evidence:
+  winner: gte-modernbert-base
+  best: gte-modernbert-base
+  baseline: gte-modernbert-base
+  tolerance_pts: 3.0
+  tolerance_widened: true
+  eligible:
+  - gte-modernbert-base
+  rejected:
+    granite-embedding-small-english-r2: 17.09 pt behind the best selectable candidate,
+      tolerance is 3.0 pt
+    granite-embedding-english-r2: 14.33 pt behind the best selectable candidate, tolerance
+      is 3.0 pt
+  default_applied: false
+  rule:
+    size_tolerance_pts: 1.0
+    slow_pass_hours: 2.0
+    slow_tolerance_pts: 3.0
+    slo_cold_pass_hours: 4.0
+    max_params_b: 1.0
+    require_permissive: true
+  notes: baseline=gte-modernbert-base at 71.0346; winner within 3.0 pt with 149014272
+    parameters
+  reference_gap_pts: 0.0
+ledger:
+  granite-embedding-small-english-r2: gate-f02f6ced3b1d
+  gte-modernbert-base: gate-055152620da6
+  granite-embedding-english-r2: gate-b698dad7af99
+decided_on: all 5,000 TRAIN queries, cpu-fp32, dev host (runs/hardware.json)

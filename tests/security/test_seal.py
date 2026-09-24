@@ -260,7 +260,9 @@ def test_the_harness_stand_in_encoder_is_refused_in_strict_mode(monkeypatch):
     monkeypatch.setenv(MODE_ENV, "A")
     monkeypatch.setenv("ACIS_CONFIG", "configs/dev.yaml")
     model = PrePostPipelineEncoder()
-    strict_cfg = model.cfg.with_overrides(**{"run.strict": True})
+    # The dev config names the G-M winner now, so the stand-in has to be asked for: this test is about what
+    # strict mode does when it is handed one, not about what the default happens to be.
+    strict_cfg = model.cfg.with_overrides(**{"run.strict": True, "model.encoder": "hashing"})
     object.__setattr__(model, "cfg", strict_cfg)
     with pytest.raises(StrictViolation, match="stand-in"):
         _ = model.engine

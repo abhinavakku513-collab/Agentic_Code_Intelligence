@@ -1,0 +1,19 @@
+# The model-free stand-in configuration. It exists so the harness, the benchmarks and the CLI can be
+# exercised without 300 MB of weights and minutes of CPU — never to produce a number about ACIS.
+# `submission_capable` is False for this encoder and a strict run refuses it, which is the point.
+run: {kind: dev, mode: A, strict: false, device: cpu, threads: auto_physical, seed: 0,
+  channel: auto}
+data: {split: train, folds: 5, fold_key: sha256_query_text, dev_h_fold: 4, corpus: full_8765}
+model: {encoder: hashing, dim: 4096, config: configs/models/gte-modernbert-base.yaml,
+  numeric_profile: cpu-fp32}
+prep:
+  query: {version: q1, view: V0, max_tokens: 1024, head: 768, tail: 256}
+  doc: {version: d1, max_tokens: 1024, head: 768, tail: 256}
+lexical: {k1: 1.5, b: 0.75, delta: 0.5, method: lucene, stemmer: english}
+retrieve:
+  dense_k: 100
+  lexical_k: 30
+  union_cap: 100
+  prf: {enabled: false}
+  top_k_out: 1000
+compose: {mode_a_scores: rank_derived}
