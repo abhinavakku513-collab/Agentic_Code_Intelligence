@@ -1,9 +1,11 @@
 # Dev configuration (never touches the held-out labels). Paths resolve from the repo root (D16).
 # `model.encoder` is the G-M winner: gte-modernbert-base, chosen on all 5,000 dev queries [ledger:gate-055152620da6].
-run:      {kind: dev, mode: A, strict: false, device: cpu, threads: auto_physical, seed: 0, channel: auto}
+run:      {kind: dev, mode: A, strict: false, device: cpu, threads: auto_physical, seed: 0, channel: hybrid}
 data:     {split: train, folds: 5, fold_key: sha256_query_text, dev_h_fold: 4, corpus: full_8765}
 model:    {encoder: gte-modernbert-base, dim: 768, config: configs/models/gte-modernbert-base.yaml, numeric_profile: cpu-fp32}
 prep:     {query: {version: q1, view: V0, max_tokens: 1024, head: 768, tail: 256}, doc: {version: d1, max_tokens: 1024, head: 768, tail: 256}}
-lexical:  {k1: 1.5, b: 0.75, delta: 0.5, method: lucene, stemmer: english}
+lexical:  {k1: 1.5, b: 0.75, delta: 0.5, method: lucene, stemmer: english, tokenizer: code}   # G2
 retrieve: {dense_k: 100, lexical_k: 30, union_cap: 100, prf: {enabled: false}, top_k_out: 1000}
+rank:     {model: artifacts/ranker/g5-gte-modernbert-code.txt}   # G5; absent -> fusion, counted
+route:    {bank: artifacts/route/dev_query_bank.npy, tau: 0.6002, k: 8, rho: 0.35}   # routing v1.1, spec 10 §4
 compose:  {mode_a_scores: rank_derived}

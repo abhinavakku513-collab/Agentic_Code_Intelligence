@@ -227,3 +227,50 @@ def test_mode_b_encodes_through_the_configured_encoder_not_a_hard_coded_one(tmp_
     model = PrePostPipelineEncoder(config_path=str(path))
     assert model.engine.encoder is not None
     assert model.engine.encoder.fingerprint == factory.build_encoder(model.cfg).fingerprint
+
+
+# -- routing v1.1 (spec 10 §4) ---------------------------------------------------------------------------------
+def test_a_query_unlike_the_training_set_takes_the_generic_path():
+    """R-Q2: the learned ranker is trained on problem statements, so it must not run on everything."""
+    import numpy as np
+
+    from acis.engine.routing import QueryBank, decide
+
+    bank = QueryBank.from_vectors(np.eye(4, dtype=np.float32), k=2)
+    statement_like = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+    stranger = np.array([0.5, 0.5, 0.5, 0.5], dtype=np.float32)
+
+    assert decide(statement_like, 1.0, bank, tau=0.4).route == "statement_like"
+    assert decide(stranger, 1.0, bank, tau=0.6).route == "generic"
+
+
+def test_a_statement_like_query_with_no_evidence_still_takes_the_generic_path():
+    """Both conditions are required: resembling the training set is not enough to have anything to rank on."""
+    import numpy as np
+
+    from acis.engine.routing import QueryBank, decide
+
+    bank = QueryBank.from_vectors(np.eye(3, dtype=np.float32), k=1)
+    vector = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+    assert decide(vector, 0.0, bank, tau=0.4, rho=0.35).route == "generic"
+    assert decide(vector, 0.8, bank, tau=0.4, rho=0.35).route == "statement_like"
+
+
+def test_routing_without_a_bank_routes_down_never_up():
+    """A missing bank, a failed encode, an empty vector: every routing failure is the generic path."""
+    from acis.engine.routing import decide
+
+    assert decide(None, 1.0, None).route == "generic"
+
+
+def test_the_route_is_counted_but_is_not_a_degradation():
+    """A query served by the generic path was served as designed; a manifest must not report a fallback."""
+    from acis.core.config import freeze_config
+    from acis.core.types import SearchRequest
+    from acis.engine.core import DEFAULT_CONFIG
+
+    config = freeze_config({**DEFAULT_CONFIG, "run": {**DEFAULT_CONFIG["run"], "channel": "hybrid"}})
+    engine = AcisEngine.from_config(config, encoder=HashingEncoder(dim=128))
+    engine.build_snapshot(DOCS, source="route")
+    response = engine.search(SearchRequest(query="anything at all", top_k=3))
+    assert "ltr_off_route" not in " ".join(response.degradations)

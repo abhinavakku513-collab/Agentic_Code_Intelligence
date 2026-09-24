@@ -1,0 +1,26 @@
+# Lexical-channel gate (spec 02 §2, Phase 4). Decided once; supersede via /adr.
+status: decided
+question: does the code-aware tokeniser earn its place over the mteb-matched stock
+  tokenisation?
+decision: code
+decided_on: all 5,000 TRAIN queries, gte-modernbert-base, LTR out-of-fold, paired
+  bootstrap
+evidence:
+  candidate: code-aware tokeniser (identifier splitting, numeric folding, operator
+    tokens)
+  incumbent: stock tokenisation (mteb/baseline-bm25s configuration, parity P2)
+  ndcg_at_10_pts:
+    code: 72.966
+    stock: 72.352
+  delta_pts: 0.614
+  ci:
+  - 0.304
+  - 0.927
+  threshold_pts: 0.5
+  passes: true
+  ledger:
+    code: gate-9bdbad663084
+    stock: gate-bffed3d40ab2
+  note: 'Measured on the *system*, not on BM25 alone: reciprocal-rank fusion is negative
+    with either tokeniser (-8.93 pt with code, -14.26 pt with stock), so the lexical
+    channel earns its place only through the ranker, which learns when to trust it.'

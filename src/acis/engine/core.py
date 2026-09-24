@@ -149,6 +149,9 @@ class AcisEngine(VersionedEngineMixin):
         self._ranker_loaded = False
         #: Lineage index per repository, keyed by the versions it was built from (Track B2).
         self._lineages: dict[str, tuple[Any, Any]] = {}
+        #: The TRAIN-query bank routing v1.1 reads (spec 10 §4). `None` sends every query down the generic path.
+        self._bank: Any = None
+        self._bank_loaded = False
 
     # -- construction ------------------------------------------------------------------------------------------
     @classmethod
@@ -287,14 +290,71 @@ class AcisEngine(VersionedEngineMixin):
             text = text[:keep] + text[-keep:]
         return q1(text), truncated
 
-    def route(self, query: str) -> Route:
-        """Routing v1.1 (spec 10 §4). Without the TRAIN-query OOD bank every query takes the generic path.
+    @property
+    def query_bank(self) -> Any:
+        """The TRAIN-query embeddings routing reads, loaded once. `None` means every query takes the generic path.
 
-        That is the specified fallback, not a shortcut: `statement_like` requires an OOD score *and* bridge-feature
-        availability, neither of which exists before the dense channel and the features do (Phases 2 and 4).
+        Query-side only: it selects a pipeline and never offsets a document's score (INV-15, spec 10 §4).
         """
-        _ = weak_marker_count(query)  # a routing signal, recorded for Phase 4; never a filter on its own
-        return "generic"
+        if self._bank_loaded:
+            return self._bank
+        self._bank_loaded = True
+        path = str(self.config.get("route.bank", "") or "")
+        if path:
+            from acis.core.paths import acis_root  # noqa: PLC0415
+            from acis.engine.routing import QueryBank  # noqa: PLC0415
+
+            target = Path(path)
+            target = target if target.is_absolute() else acis_root() / target
+            if target.is_file():
+                self._bank = QueryBank.load(target, k=int(self.config.get("route.k", 8)))
+        return self._bank
+
+    def route(self, query: str, *, availability: float | None = None) -> Route:
+        """Routing v1.1 (spec 10 §4). See `route_decision` for the signals and the reason."""
+        return self.route_decision(query, availability=availability).route  # type: ignore[return-value]
+
+    def route_decision(self, query: str, *, availability: float | None = None) -> Any:
+        """The full decision: route, OOD score, feature availability and why.
+
+        Availability is passed in when the caller has already built the features (the hybrid path has), and
+        computed from the query alone otherwise — a query with no numbers, no quoted output and no structural
+        cues gives the ranker nothing, whatever it resembles.
+        """
+        from acis.engine.routing import DEFAULT_RHO, DEFAULT_TAU, decide  # noqa: PLC0415
+        from acis.features.query import BRIDGE_FEATURES  # noqa: PLC0415
+        from acis.features.query import extract as query_features
+
+        _ = weak_marker_count(query)  # a signal the decision may use later; never a filter on its own
+        bank = self.query_bank
+        if availability is None:
+            qf = query_features(query)
+            fired = sum(
+                1
+                for name, present in (
+                    ("out_literal_recall", bool(qf.expected_outputs)),
+                    ("numeric_literal_overlap", bool(qf.numeric_literals)),
+                    ("const_jaccard", bool(qf.numeric_literals)),
+                    ("io_shape_compat", qf.mentions_input),
+                    ("tc_loop_expected", qf.mentions_testcases),
+                )
+                if present
+            )
+            availability = fired / len(BRIDGE_FEATURES)
+
+        vector = None
+        if bank is not None and self.encoder is not None:
+            try:
+                vector = np.asarray(self.encoder.encode([query], is_query=True)[0], dtype=np.float32)
+            except Exception:  # noqa: BLE001 — a routing failure routes down, it never fails a search
+                vector = None
+        return decide(
+            vector,
+            float(availability),
+            bank,
+            tau=float(self.config.get("route.tau", DEFAULT_TAU)),
+            rho=float(self.config.get("route.rho", DEFAULT_RHO)),
+        )
 
     def _query_vector(self, snapshot_id: str, query: str, *, route: str = "generic") -> np.ndarray:
         assert self.encoder is not None
@@ -430,7 +490,16 @@ class AcisEngine(VersionedEngineMixin):
 
         ranker = self.ranker
         head: list[str]
-        if ranker is not None:
+        if ranker is not None and route != "statement_like":
+            # R-Q2 (spec 10 §2): the learned ranker is trained on problem statements, and on a short hands-on
+            # question it is measurably worse than the frozen dense order. The route is what keeps it off them.
+            #
+            # Counted, but **not** a degradation: this is the specified behaviour for a non-statement query, not
+            # a fallback from something better. Calling it one would make strict mode refuse a correct ranking
+            # and would put a fallback in the submission manifest that never happened.
+            counters.incr(f"route.{route}.ltr_skipped")
+            head = [c.doc_id for c in pool if c.dense_rank] or [c.doc_id for c in pool]
+        elif ranker is not None:
             head, abstained = ranker.rerank(doc_ids, matrix)
             if abstained:
                 degradation("ltr_abstained", "not enough feature groups fired", strict=False, counters=counters)

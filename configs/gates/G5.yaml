@@ -1,0 +1,22 @@
+# Learned-ranker gate (spec 02 §4, Phase 4). Decided once; supersede via /adr.
+status: decided
+question: does the cross-fitted LambdaRank ranker beat the frozen dense order?
+decision: ship the ranker
+decided_on: all 5,000 TRAIN queries, out-of-fold (every query scored by a model that
+  never saw it)
+evidence:
+  baseline_ndcg_at_10_pts: 71.035
+  ranker_ndcg_at_10_pts: 72.966
+  delta_pts: 1.93
+  ci:
+  - 1.52
+  - 2.35
+  threshold_pts: 0.5
+  passes: true
+  encoder: gte-modernbert-base
+  tokenizer: code
+  ledger:
+    ranker: gate-9bdbad663084
+    encoder_baseline: gate-055152620da6
+  abstention: rho=0.35 of feature groups; the dense order stands when the evidence
+    has not fired

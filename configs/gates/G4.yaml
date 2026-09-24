@@ -1,0 +1,9 @@
+# Pseudo-relevance-feedback gate (spec 02 §4 stage 5). Not decided.
+status: undecided
+question: does pseudo-relevance feedback help on this task?
+decision: null
+note: 'Built and gated off (`retrieve.prf.enabled: false`). Not measured: the encoder
+  bake-off and G2/G5 consumed the available CPU, and an unmeasured feature that is
+  switched on is exactly what the gates exist to prevent. The second-pass score and
+  rank are already LTR features, so measuring it later is a re-run of `scripts/bench/ltr_build.py`
+  with `prf.enabled: true` and nothing else.'
