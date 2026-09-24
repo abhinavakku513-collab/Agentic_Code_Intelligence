@@ -73,3 +73,43 @@ def test_empty_and_hostile_input_produce_no_tokens_and_no_exception():
 def test_tokenisation_is_deterministic():
     text = "def solve(n):\n    return n % 10**9 + 7\n"
     assert code_tokens(text) == code_tokens(text)
+
+
+def test_the_tokens_survive_the_round_trip_into_the_index():
+    """`bm25s.tokenize` takes strings, so the tokens go through a join — and must come back unchanged.
+
+    The failure this catches was real: handing it pre-split lists raised deep inside the library, and the shape
+    that *does* work could still have lost `op_mod` to a word pattern that splits on underscores.
+    """
+    from acis.lexical.codetok import tokenize_code
+
+    encoded = tokenize_code(["a % b", "def binary_search(xs):\n    return 10**9 + 7\n"])
+    vocab = set(encoded.vocab)
+    assert "op_mod" in vocab and "op_pow" in vocab
+    assert {"binary", "search", "binarysearch"} <= vocab
+    assert "1000000007" in vocab
+
+
+def test_an_index_built_on_code_tokens_retrieves_across_the_vocabulary_gap():
+    """The gap this closes, end to end: a statement says "binary search", the solution calls it `binary_search`.
+
+    The gap it does **not** close is worth stating too: "heap" and `heapq` are different tokens and stay that
+    way. Bridging them is the dense channel's job, and a lexical tokeniser that guessed at synonyms would be
+    inventing matches rather than finding them.
+    """
+    from acis.lexical.bm25 import Bm25Index
+
+    docs = [
+        "def binary_search(xs, target):\n    lo = 0\n    return lo\n",
+        "import heapq\ndef dijkstra(g, s):\n    return {}\n",
+        "def is_palindrome(s):\n    return s == s[::-1]\n",
+    ]
+    index = Bm25Index.build(["d0", "d1", "d2"], docs, tokenizer="code")
+    assert index.search_one("binary search over a sorted array", k=3)[0][0] == "d0"
+    assert index.search_one("dijkstra with heapq", k=3)[0][0] == "d1"
+    assert index.search_one("is the string a palindrome", k=3)[0][0] == "d2"
+
+    stock = Bm25Index.build(["d0", "d1", "d2"], docs)
+    assert stock.search_one("binary search over a sorted array", k=3)[0][1] == 0.0, (
+        "the stock tokeniser matches nothing here, which is why the code-aware one exists"
+    )

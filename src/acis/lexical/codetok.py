@@ -171,16 +171,19 @@ def code_tokens(text: str, *, keep_stopwords: bool = False, stopwords: frozenset
 def tokenize_code(texts: Sequence[str], *, stopwords: Sequence[str] | None = None, stemmer: Any | None = None) -> Any:
     """Tokenise a corpus for `bm25s`, in the `Tokenized` shape its index expects.
 
-    bm25s is handed *pre-split* tokens rather than raw text: its own splitter would undo the identifier splitting
-    and operator tokens this module exists to produce.
+    The tokens are produced here and then handed to `bm25s` as space-joined text with its own filtering switched
+    off. `bm25s.tokenize` takes strings, not pre-split lists — and its default word pattern keeps exactly what
+    this module emits: `op_mod` stays one token (underscores are word characters), numbers survive, and nothing
+    shorter than two characters is produced in the first place. So the round trip through a string is lossless,
+    and it costs one join instead of a second implementation of `Tokenized`.
     """
     import bm25s  # noqa: PLC0415
 
     stops = frozenset(s.lower() for s in (stopwords or ()))
     split = [code_tokens(text, stopwords=stops or None) for text in texts]
     if stemmer is not None:
-        split = [[str(s) for s in stemmer.stemWords(tokens)] if tokens else [] for tokens in split]
-    return bm25s.tokenize(split, stopwords=None, stemmer=None, show_progress=False)
+        split = [[str(token) for token in stemmer.stemWords(tokens)] if tokens else [] for tokens in split]
+    return bm25s.tokenize([" ".join(tokens) for tokens in split], stopwords=None, stemmer=None, show_progress=False)
 
 
 __all__ = [
