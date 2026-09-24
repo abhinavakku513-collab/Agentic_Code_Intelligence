@@ -107,3 +107,26 @@ def test_features_are_generic_rather_than_a_list_of_known_constants():
     f = docf.extract("MOD = 998244353\nprint(1 % MOD)\n")
     assert 998244353 in q.numeric_literals and 998244353 in f.numeric_constants
     assert qf.bridge(q, f)["numeric_literal_overlap"] > 0.0
+
+
+def test_a_long_constant_expression_does_not_take_quadratic_time():
+    """Found in the corpus: an APPS document that is one arithmetic expression tens of thousands of terms long.
+
+    Folding constants naively visits every node and re-descends the whole chain beneath it, so extraction on that
+    file did not finish in an hour. The depth bound makes it linear, and the bound costs nothing real: `10**9 + 7`
+    is depth two.
+    """
+    import time
+
+    chain = "x = " + " + ".join(str(i % 97) for i in range(20_000)) + "\n"
+    started = time.perf_counter()
+    features = docf.extract(chain)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 5.0, f"extraction took {elapsed:.1f}s on a 20,000-term constant expression"
+    assert features.parse_ok
+
+
+def test_the_depth_bound_does_not_cost_the_constant_that_matters():
+    """The fold exists for `10**9 + 7`; bounding it must leave that untouched."""
+    assert 1000000007 in docf.extract("MOD = 10**9 + 7\n").numeric_constants
+    assert 998244353 in docf.extract("m = 998244353\n").numeric_constants
