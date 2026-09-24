@@ -99,13 +99,19 @@ def oof_run(oof: dict[str, list[tuple[str, float]]], *, top_k: int = 100) -> dic
 def compare(
     name: str, run: dict[str, dict[str, float]], baseline: dict[str, dict[str, float]], qrels
 ) -> dict[str, Any]:
-    """Paired bootstrap against the baseline, on the metric the gate is written in."""
+    """Paired bootstrap against the baseline, on the metric the gate is written in.
+
+    The per-query vector travels with the result. Comparing two *systems* later — the code tokeniser against the
+    stock one, say — needs the same queries paired, and two independent deltas against a shared baseline are not
+    that comparison however close their intervals look.
+    """
     metrics = score_run(qrels, run, K_VALUES)
     a = per_query(qrels, run, "ndcg", 10)
     b = per_query(qrels, baseline, "ndcg", 10)
     result = paired_bootstrap(a, b)
     return {
         "name": name,
+        "per_query_ndcg_at_10": {qid: round(v, 6) for qid, v in sorted(a.items())},
         "ndcg_at_10": round(metrics["ndcg_at_10"] * 100, 4),
         "mrr_at_10": round(metrics["mrr_at_10"] * 100, 4),
         "recall_at_100": round(metrics["recall_at_100"] * 100, 4),
