@@ -107,7 +107,13 @@ KEEP = frozenset(
 _PY_POWER = re.compile(r"(\d{1,18}+)\s*+\*\*\s*+(\d{1,18}+)")  # bounded: see `prep.normalize`
 _TOKEN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|\d+")
 _CAMEL = re.compile(r"[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+")
-_STRING = re.compile(r"""(['"])(?:\\.|(?!\1).)*\1""", re.DOTALL)
+# The readable form — `(['"])(?:\\.|(?!\1).)*\1` — is **exponential**, and on exactly the text this corpus is
+# made of. `\\.` and `(?!\1).` both match a backslash followed by anything, so every backslash doubles the number
+# of paths the engine explores; an APPS statement is full of LaTeX (`\le`, `\sum_{i}`, `\cdot`) and apostrophes
+# ("Bob's"), and one unmatched quote after eight LaTeX groups took **29 seconds** on 180 characters. The two
+# branches here are disjoint — one cannot start with a backslash or a quote, the other must — and the possessive
+# star stops the engine giving characters back. Same literals found, 0.00001 s.
+_STRING = re.compile(r"""(['"])(?:[^'"\\]|\\.)*+\1""")
 MIN_TOKEN_CHARS = 2
 
 

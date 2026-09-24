@@ -113,3 +113,25 @@ def test_an_index_built_on_code_tokens_retrieves_across_the_vocabulary_gap():
     assert stock.search_one("binary search over a sorted array", k=3)[0][1] == 0.0, (
         "the stock tokeniser matches nothing here, which is why the code-aware one exists"
     )
+
+
+def test_latex_and_an_unmatched_quote_do_not_blow_up_the_tokeniser():
+    """The shape this corpus is actually made of: LaTeX, apostrophes, and a quote that never closes.
+
+    The readable form of the string-literal pattern is exponential on it — 29 seconds on 180 characters — and
+    `code_tokens` runs on every query, so that is a denial of service. The bound here is generous; the failure it
+    catches is five orders of magnitude out.
+    """
+    import time
+
+    hostile = "Bob's problem: " + r"\le \sum_{i} \cdot " * 40 + " unterminated '"
+    started = time.perf_counter()
+    tokens = code_tokens(hostile)
+    elapsed = time.perf_counter() - started
+    assert elapsed < 1.0, f"tokenising took {elapsed:.1f}s"
+    assert tokens
+
+
+def test_string_literals_are_still_found_after_the_pattern_was_made_linear():
+    tokens = code_tokens("""print("YES") if flag else print('no')""")
+    assert "yes" in tokens and "no" in tokens
