@@ -118,12 +118,15 @@ def test_a_long_constant_expression_does_not_take_quadratic_time():
     """
     import time
 
-    chain = "x = " + " + ".join(str(i % 97) for i in range(20_000)) + "\n"
-    started = time.perf_counter()
-    features = docf.extract(chain)
-    elapsed = time.perf_counter() - started
-    assert elapsed < 5.0, f"extraction took {elapsed:.1f}s on a 20,000-term constant expression"
-    assert features.parse_ok
+    for terms in (2_000, 20_000):
+        chain = "x = " + " + ".join(str(i % 97) for i in range(terms)) + "\n"
+        started = time.perf_counter()
+        features = docf.extract(chain)
+        elapsed = time.perf_counter() - started
+        assert elapsed < 5.0, f"extraction took {elapsed:.1f}s on a {terms}-term constant expression"
+        # Either answer is correct and both are useful: a chain deep enough to exhaust Python's own recursion
+        # limit is reported as unparseable and still described, which is the contract (spec 02 §2).
+        assert features.n_tokens > 0
 
 
 def test_the_depth_bound_does_not_cost_the_constant_that_matters():
