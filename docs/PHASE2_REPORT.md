@@ -1,7 +1,7 @@
 # Phase 2 progress report — the encoder is chosen; RC0 waits on the owner
 
 Scope: `docs/spec/07` Phase 2 (dense engine + encoder bake-off → RC0). **The phase is not complete.** G-M is
-decided, G1 has not been run, and RC0 has not been produced. The held-out touch counter is still **0 of 6**. Every
+decided, G1 is running (§5), and RC0 has not been produced. The held-out touch counter is still **0 of 6**. Every
 accuracy number below is a dev-split number (`split="train"`, all 5,000 queries unless stated), cited to the
 ledger (INV-14).
 
@@ -112,6 +112,8 @@ found five more. Four were denial-of-service shapes on inputs this corpus actual
 | 4a8e898 | constant folding quadratic on a single tens-of-thousands-term expression | did not finish in 1 h → 0.04 s; the 400 longest docs take 2.4 s together |
 | 9cc1cc5 | `bm25s.tokenize` was handed token lists instead of strings, and raised inside the library | lossless space-joined round trip |
 | 1193ef5 | appending one gate row dirtied the tree, so the second row was refused (would have broken RC1 A+B) | ledger exempt from the dirty check; source changes still refused |
+| 87f82c5 | the vector-cache key covered the whole `prep` section, so a *query*-side change invalidated every cached *document* vector: each G1 cell would have re-embedded the corpus | each side keyed on its own prep; one corpus re-embed, then reused across the grid |
+| 87f82c5 | G1 could not run on the chosen encoder: task dimension crashed on a card with no instructions, a 2048 cell on a 1024-token card was a fake tie, and cells went through hybrid + a ranker trained on the default cell | grid planned from the card (9 cells: V0/V1/V2 × 256/512/1024), dense channel pinned |
 
 Two of these (4a8e898, ac3c552) are why a gate experiment stalled at "1750/5000 queries" twice. Plus one
 modelling error caught by a contract test (bb24a05): "routed to generic" was first counted as a
@@ -122,14 +124,14 @@ The four defects from the first draft still hold: Mode B building its own encode
 encoder, the G-M tolerance measured from a non-selectable candidate, and `bm25s` raising on a corpus with no
 indexable term.
 
-Suite at the time of writing: **817 passed, 3 xfailed** (the declared guard-hook gaps) on `make test-fast`.
+Suite at the time of writing: **825 passed, 3 xfailed** (the declared guard-hook gaps) on `make test-fast`.
 
 ## 5. What is left for the Phase 2 exit gate
 
 | Item | State | Needed |
 |---|---|---|
 | G-M | **decided** | — |
-| G1 prep sweep, per route | **not run** | `uv run acis eval gate --gate G1 --route statement_like`, then `generic`; hours per route with the real encoder, so run it via `scripts/run_detached.sh`. Until then the frozen defaults stand (statement_like: T1+V0, 1024/1024; generic: T3+V0) |
+| G1 prep sweep | **running** since 2026-09-25 (job `g1-statement_like`, `scripts/bench/g1_run.py`) | then `--record-only` from a clean tree and `--decide`. One route suffices: the card has no task strings, and the task string was the only per-route difference, so `generic` would measure identical cells. Until decided, the frozen default stands (V0, 1024) |
 | Real-encoder `make bench` | not run | re-measure latency against spec 02 §7 with `configs/dev.yaml` |
 | RC0 (Mode B, frozen dense) | **not produced** | `configs/official.yaml` does not exist yet (only `official.example.yaml`), and `make rc-official` needs it. Writing it for RC0 is the next build step; then the owner steps below |
 | verify-submission on RC0 | pending | follows RC0 |
