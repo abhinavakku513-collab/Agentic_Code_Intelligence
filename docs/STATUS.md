@@ -20,10 +20,11 @@ What that costs: Phase 2 decisions (G-M, G1) will be taken against a Phase 1 who
 owner's canary run later reveals a hook problem, work done after this point is the work that has to be re-examined.
 Nothing else is affected — the harness evidence stands on its own, and the held-out touch counter is still 0 of 6.
 
-**Also blocking in practice:** this sandbox currently has no network, so model weights cannot be downloaded.
-G0.4/G0.5 and the G-M bake-off therefore cannot run here. Phase 2 work proceeds on the parts that need no weights
-(encoder runtime, vector cache, model registry, batching, the bake-off harness itself), each behind an interface a
-real encoder plugs into, so the measurement passes can run unchanged the moment weights are available.
+**Weights: no longer blocking (corrected 2026-09-25 on the owner's confirmation).** The earlier "no network"
+note is outdated. Four models were fetched and pinned by commit + per-file SHA-256 on 2026-09-23
+(`runs/model_radar.json`); `acis fetch --models gte-modernbert-base --verify` reports "as pinned"; the G-M bake-off
+ran on real models over all 5,000 dev queries (`gate-055152620da6`, `gate-b698dad7af99`, `gate-f02f6ced3b1d`).
+The network is needed only to fetch weights; embedding runs offline on CPU. Details: docs/PHASE2_REPORT.md.
 
 ## Why the Phase 1 gate is not recorded as PASS
 The Phase 1 build and its acceptance criteria are complete and independently verified (docs/PHASE1_REPORT.md), but
