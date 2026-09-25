@@ -145,3 +145,84 @@ def test_two_routes_are_two_decisions_in_one_file(tmp_path):
     record_decision(decide_g1(cells, route="generic", baseline=DEFAULT.key), path=path)
     text = path.read_text(encoding="utf-8")
     assert "statement_like" in text and "generic" in text
+
+
+# -- the grid a card can actually express -------------------------------------------------------------------------
+def card(*, tasks: dict[str, str] | None = None, max_tokens: int = 1024):
+    from acis.embed.registry import ModelCard
+
+    return ModelCard(
+        key="m",
+        name="org/m",
+        base_commit="abc",
+        licence="apache-2.0",
+        pooling="cls",
+        normalize=True,
+        padding_side="right",
+        query_template="",
+        document_template="{text}",
+        tasks=tasks or {},
+        max_tokens=max_tokens,
+    )
+
+
+def test_a_card_without_task_strings_sweeps_no_task_dimension():
+    from acis.eval.sweep import NO_TASK, plan_grid
+
+    cells, skipped = plan_grid(card(tasks={}))
+    assert {c.task for c in cells} == {NO_TASK}
+    assert len(cells) == 3 * 3  # three views x the three lengths within the 1,024-token cap
+    assert all(t in skipped for t in ("T1", "T2", "T3"))
+
+
+def test_a_length_the_encoder_would_truncate_anyway_is_not_a_cell():
+    """A 2,048 cell on a 1,024-token card encodes the same tokens as the 1,024 cell: a fake tie, not a result."""
+    from acis.eval.sweep import plan_grid
+
+    cells, skipped = plan_grid(card(tasks={}, max_tokens=1024))
+    assert max(c.max_tokens for c in cells) == 1024
+    assert "2048" in skipped and "1024" in skipped["2048"]
+
+
+def test_a_card_with_task_strings_keeps_only_the_tasks_it_has():
+    from acis.eval.sweep import plan_grid
+
+    cells, skipped = plan_grid(card(tasks={"T1": "a", "T3": "c"}, max_tokens=2048))
+    assert {c.task for c in cells} == {"T1", "T3"}
+    assert "T2" in skipped
+    assert len(cells) == 2 * 3 * 4
+
+
+def test_the_baseline_follows_the_card():
+    from acis.eval.sweep import NO_TASK, plan_baseline
+
+    assert plan_baseline("T1/V0/1024", card(tasks={})) == f"{NO_TASK}/V0/1024"
+    assert plan_baseline("T1/V0/1024", card(tasks={"T1": "a"})) == "T1/V0/1024"
+    assert plan_baseline("T1/V0/2048", card(tasks={}, max_tokens=1024)) == f"{NO_TASK}/V0/1024"
+
+
+def test_no_task_leaves_the_encoder_untouched_and_a_real_task_is_applied():
+    from acis.eval.sweep import NO_TASK, apply_task
+
+    class Fake:
+        def __init__(self, applied=None):
+            self.applied = applied
+
+        def with_route_task(self, route, task):
+            return Fake((route, task))
+
+    enc = Fake()
+    assert apply_task(enc, "statement_like", NO_TASK) is enc
+    assert apply_task(enc, "statement_like", "T1").applied == ("statement_like", "T1")
+
+
+def test_a_cell_is_measured_on_the_dense_channel_alone():
+    """G1 decides the dense query representation. Measured through hybrid + the ranker, every non-default cell
+    would be scored by a ranker trained on the default cell's vectors — a verdict on the ranker, not the prep."""
+    from acis.eval.sweep import cell_overrides
+
+    over = cell_overrides(Cell(task="-", view="V1", max_tokens=512))
+    assert over["run.channel"] == "dense"
+    assert (over["prep.query.view"], over["prep.query.max_tokens"]) == ("V1", 512)
+    assert over["prep.query.head"] + over["prep.query.tail"] == 512
+    assert not any(k.startswith("prep.doc") for k in over)

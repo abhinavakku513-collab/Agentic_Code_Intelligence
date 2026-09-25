@@ -41,13 +41,17 @@ def profile_of(config: FrozenConfig) -> str:
     return str(config.get("model.numeric_profile", REFERENCE_PROFILE))
 
 
-def prep_hash(config: FrozenConfig) -> str:
-    """Identity of the preprocessing a vector was produced under (D3).
+def prep_hash(config: FrozenConfig, *, side: str) -> str:
+    """Identity of the preprocessing one side's vectors were produced under (D3). `side` is "doc" or "query".
 
     Truncating at 512 tokens instead of 1024 changes what the model reads, so it changes the vector — and a cache
-    that ignored it would serve the old one for the rest of the sweep.
+    that ignored it would serve the old one for the rest of the sweep. Each side is keyed on its own settings
+    only: a query-side sweep (G1) must not invalidate every cached document vector, which it did when the key
+    covered the whole `prep` section.
     """
-    return short(hash_obj(config.as_dict().get("prep", {})), 12)
+    if side not in ("doc", "query"):
+        raise ValueError(f"prep side is 'doc' or 'query', not {side!r}")
+    return short(hash_obj(config.as_dict().get("prep", {}).get(side, {})), 12)
 
 
 def model_dir(key: str) -> Path:
@@ -83,7 +87,14 @@ def build_encoder(config: FrozenConfig, *, cache: bool = True) -> Encoder:
     from acis.embed.runtime import load_runtime  # noqa: PLC0415 — torch is imported only when weights exist
 
     store = VectorCache.open(vector_cache_dir(name)) if cache else None
-    runtime = load_runtime(card, directory, profile=profile_of(config), cache=store, prep_hash=prep_hash(config))
+    runtime = load_runtime(
+        card,
+        directory,
+        profile=profile_of(config),
+        cache=store,
+        prep_hash=prep_hash(config, side="doc"),
+        query_prep_hash=prep_hash(config, side="query"),
+    )
     log.info("encoder.built", model=card.name, profile=profile_of(config), cached=cache)
     return runtime
 

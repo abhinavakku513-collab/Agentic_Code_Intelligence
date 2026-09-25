@@ -24,7 +24,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 
@@ -312,7 +312,7 @@ class AcisEngine(VersionedEngineMixin):
 
     def route(self, query: str, *, availability: float | None = None) -> Route:
         """Routing v1.1 (spec 10 §4). See `route_decision` for the signals and the reason."""
-        return self.route_decision(query, availability=availability).route  # type: ignore[return-value]
+        return cast(Route, self.route_decision(query, availability=availability).route)
 
     def route_decision(self, query: str, *, availability: float | None = None) -> Any:
         """The full decision: route, OOD score, feature availability and why.

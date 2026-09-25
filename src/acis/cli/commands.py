@@ -548,15 +548,22 @@ def _gate_1(args: argparse.Namespace) -> int:
     — a route is a separate decision (INV-15) and a separate afternoon of compute.
     """
     from acis.appsdata import apps
+    from acis.core.config import load_frozen_config
+    from acis.embed.registry import load_card
     from acis.eval.ladder import FULL_DEV_POOL
-    from acis.eval.sweep import Cell, default_grid, record_decision, render_table, run_g1
+    from acis.eval.sweep import Cell, plan_baseline, plan_grid, record_decision, render_table, run_g1
 
-    cells = [Cell(*_parse_cell(c)) for c in args.cells.split(",") if c.strip()] if args.cells else default_grid()
+    card = load_card(str(load_frozen_config("configs/dev.yaml").get("model.encoder")))
+    planned, skipped = plan_grid(card)
+    for value, reason in skipped.items():
+        print(f"G1: not sweeping {value}: {reason}")
+    cells = [Cell(*_parse_cell(c)) for c in args.cells.split(",") if c.strip()] if args.cells else planned
+    baseline = plan_baseline(args.baseline, card)
     ids = list(apps.dev_query_ids())
     if args.limit > 0:
         ids = ids[: args.limit]
 
-    measurements, decision = run_g1(args.route, query_ids=ids, grid=cells, baseline=args.baseline)
+    measurements, decision = run_g1(args.route, query_ids=ids, grid=cells, baseline=baseline)
     print(render_table(measurements, decision))
     print(f"\nwinner={decision.winner}  adopted={decision.adopted}  n={decision.n_queries}")
     if args.record:

@@ -148,7 +148,9 @@ class EncoderRuntime:
     backend: Backend
     profile: str = REFERENCE_PROFILE
     cache: VectorCache | None = None
+    #: Document-side prep identity; queries are keyed on `query_prep_hash`, so each side moves only with its own.
     prep_hash: str = ""
+    query_prep_hash: str = ""
     token_budget: int = DEFAULT_TOKEN_BUDGET
     threads: int = 0
     forward_calls: int = 0
@@ -211,7 +213,7 @@ class EncoderRuntime:
         return vector_key(
             model_fingerprint=self.fingerprint,
             numeric_profile=self.profile,
-            prep_hash=self.prep_hash,
+            prep_hash=self.query_prep_hash if is_query else self.prep_hash,
             text=rendered,
             prompt_hash=prompt,
         )
@@ -308,6 +310,7 @@ def load_runtime(
     profile: str = REFERENCE_PROFILE,
     cache: VectorCache | None = None,
     prep_hash: str = "",
+    query_prep_hash: str = "",
 ) -> EncoderRuntime:
     """Build a runtime over real weights. Raises clearly when the weights are simply not here yet."""
     directory = Path(model_dir)
@@ -322,6 +325,7 @@ def load_runtime(
         profile=profile,
         cache=cache,
         prep_hash=prep_hash,
+        query_prep_hash=query_prep_hash,
     )
 
 

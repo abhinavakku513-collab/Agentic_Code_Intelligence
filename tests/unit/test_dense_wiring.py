@@ -98,9 +98,38 @@ def test_weights_and_vectors_live_outside_the_repository(_home):
 def test_the_prep_settings_are_part_of_the_cache_identity():
     """Vectors truncated at 1024 tokens are not the same vectors as those truncated at 512 (D3)."""
     long_prep = {**DEFAULT_CONFIG["prep"], "doc": {"version": "d1", "max_tokens": 512, "head": 384, "tail": 128}}
-    a = factory.prep_hash(config())
-    b = factory.prep_hash(freeze_config({**DEFAULT_CONFIG, "model": DEV_MODEL, "prep": long_prep}))
+    a = factory.prep_hash(config(), side="doc")
+    b = factory.prep_hash(freeze_config({**DEFAULT_CONFIG, "model": DEV_MODEL, "prep": long_prep}), side="doc")
     assert a != b
+
+
+def test_each_side_of_the_cache_key_moves_only_with_its_own_prep():
+    """Sweeping the *query* truncation must not invalidate 8,765 cached *document* vectors (G1 would pay a full
+    corpus re-encode per cell), and a document setting must not invalidate cached queries."""
+    base = config()
+    short_query = {**DEFAULT_CONFIG["prep"], "query": {**DEFAULT_CONFIG["prep"]["query"], "max_tokens": 256}}
+    short_doc = {**DEFAULT_CONFIG["prep"], "doc": {**DEFAULT_CONFIG["prep"]["doc"], "max_tokens": 256}}
+    q_changed = freeze_config({**DEFAULT_CONFIG, "model": DEV_MODEL, "prep": short_query})
+    d_changed = freeze_config({**DEFAULT_CONFIG, "model": DEV_MODEL, "prep": short_doc})
+
+    assert factory.prep_hash(q_changed, side="doc") == factory.prep_hash(base, side="doc")
+    assert factory.prep_hash(q_changed, side="query") != factory.prep_hash(base, side="query")
+    assert factory.prep_hash(d_changed, side="query") == factory.prep_hash(base, side="query")
+    assert factory.prep_hash(d_changed, side="doc") != factory.prep_hash(base, side="doc")
+
+
+def test_the_runtime_keys_queries_and_documents_on_their_own_prep():
+    from acis.embed.runtime import EncoderRuntime
+
+    class Backend:
+        dim = 4
+        weights_digest = "w"
+
+    card = __import__("acis.embed.registry", fromlist=["load_card"]).load_card("gte-modernbert-base")
+    rt = EncoderRuntime(card=card, backend=Backend(), prep_hash="DOC", query_prep_hash="QUERY", threads=1)
+    other = EncoderRuntime(card=card, backend=Backend(), prep_hash="DOC", query_prep_hash="QUERY2", threads=1)
+    assert rt._cache_key("t", is_query=False, route="generic") == other._cache_key("t", is_query=False, route="generic")
+    assert rt._cache_key("t", is_query=True, route="generic") != other._cache_key("t", is_query=True, route="generic")
 
 
 def test_the_numeric_profile_follows_the_configuration():

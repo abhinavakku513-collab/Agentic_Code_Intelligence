@@ -37,6 +37,8 @@ GATE_CONFIG = ("configs", "gates", "G1.yaml")
 TASKS = ("T1", "T2", "T3")
 VIEWS = ("V0", "V1", "V2")
 LENGTHS = (256, 512, 1024, 2048)
+#: The task "dimension" of a card that carries no task strings: the model takes no instruction, so there is one.
+NO_TASK = "-"
 #: V1 is the same cap over shorter text, so it is never dearer than V0 at the same cap; V2 pays for two encodes.
 VIEW_COST_RANK = {"V1": 0, "V0": 1, "V2": 2}
 
@@ -250,6 +252,69 @@ def default_grid(
     return [Cell(task=t, view=v, max_tokens=n) for t in tasks for v in views for n in lengths]
 
 
+def plan_grid(
+    card: Any, tasks: Sequence[str] = TASKS, views: Sequence[str] = VIEWS, lengths: Sequence[int] = LENGTHS
+) -> tuple[list[Cell], dict[str, str]]:
+    """The grid this model card can actually express, and why each dropped value was dropped.
+
+    Two values would otherwise be measured and mean nothing. A task the card has no string for either crashes
+    (`with_route_task`) or silently encodes without one; a length above the card's `max_tokens` is cut back by
+    the encoder, so it re-measures a smaller cell and reads as a free tie.
+    """
+    skipped: dict[str, str] = {}
+    card_tasks = dict(getattr(card, "tasks", {}) or {})
+    if card_tasks:
+        kept_tasks = [t for t in tasks if t in card_tasks]
+        skipped.update({t: f"card {card.key!r} has no task string {t!r}" for t in tasks if t not in card_tasks})
+    else:
+        kept_tasks = [NO_TASK]
+        skipped.update(
+            dict.fromkeys(tasks, f"card {card.key!r} carries no task strings: the model takes no instruction")
+        )
+    cap = int(card.max_tokens)
+    kept_lengths = [n for n in lengths if n <= cap]
+    skipped.update(
+        {
+            str(n): f"above the card's {cap}-token cap: the encoder would truncate it to {cap}"
+            for n in lengths
+            if n > cap
+        }
+    )
+    return default_grid(kept_tasks, views, kept_lengths), skipped
+
+
+def plan_baseline(baseline: str, card: Any) -> str:
+    """Map the declared incumbent cell onto what the card can express (see `plan_grid`)."""
+    task, view, length = baseline.split("/")
+    if not getattr(card, "tasks", None):
+        task = NO_TASK
+    return f"{task}/{view}/{min(int(length), int(card.max_tokens))}"
+
+
+def apply_task(encoder: Any, route: str, task: str) -> Any:
+    """Encode `route` with `task` — or leave the encoder alone when the card has no instruction to choose."""
+    with_task = getattr(encoder, "with_route_task", None)
+    if task == NO_TASK or with_task is None:
+        return encoder
+    return with_task(route, task)
+
+
+def cell_overrides(cell: Cell) -> dict[str, Any]:
+    """The configuration one cell is measured under: its query prep, on the dense channel alone.
+
+    Only the query side moves (document vectors stay cached across the grid), and the channel is pinned to dense:
+    the dev config ships hybrid + a ranker trained on the default cell's vectors, and scoring other cells through
+    it would measure the ranker's reaction to a prep change rather than the prep.
+    """
+    return {
+        "run.channel": "dense",
+        "prep.query.view": cell.view,
+        "prep.query.max_tokens": cell.max_tokens,
+        "prep.query.head": cell.head,
+        "prep.query.tail": cell.tail,
+    }
+
+
 def measure_cell(
     cell: Cell,
     *,
@@ -271,18 +336,8 @@ def measure_cell(
     from acis.eval.metrics import K_VALUES, per_query, score_run  # noqa: PLC0415
     from acis.rank.compose import rank_derived_scores  # noqa: PLC0415
 
-    config = load_frozen_config(config_path).with_overrides(
-        **{
-            "prep.query.view": cell.view,
-            "prep.query.max_tokens": cell.max_tokens,
-            "prep.query.head": cell.head,
-            "prep.query.tail": cell.tail,
-        }
-    )
-    encoder = build_encoder(config)
-    with_task = getattr(encoder, "with_route_task", None)
-    if with_task is not None:
-        encoder = with_task(route, cell.task)
+    config = load_frozen_config(config_path).with_overrides(**cell_overrides(cell))
+    encoder = apply_task(build_encoder(config), route, cell.task)
 
     engine = AcisEngine.from_config(config, encoder=encoder)
     snapshot = engine.build_snapshot(apps.load_corpus(), source=f"g1:{route}:{cell.key}")
@@ -325,7 +380,12 @@ __all__ = [
     "G1Decision",
     "Measurement",
     "decide_g1",
+    "NO_TASK",
+    "apply_task",
+    "cell_overrides",
     "default_grid",
+    "plan_baseline",
+    "plan_grid",
     "measure_cell",
     "record_decision",
     "render_table",
