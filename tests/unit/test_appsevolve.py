@@ -168,3 +168,19 @@ def test_an_evolution_can_be_handed_straight_to_a_memory_source():
     options = evolution.as_source_options()
     assert set(options["versions"]) == set(evolution.labels)
     assert options["versions"]["v1"] == dict(SEEDS)
+
+
+def test_rename_never_breaks_an_import_or_an_attribute():
+    """A refactor renames *our* names. Renaming `heapq` or `.sort` produces code that no longer runs, and it is the
+    first thing a reader of the demo sees (`import heapq_v85`)."""
+    text = (
+        "import heapq\nfrom collections import deque\nimport numpy as np\n"
+        "def solve(graph, start):\n    queue = deque([start])\n    graph.sort()\n"
+        "    return heapq.heappop(np.array(queue))\n"
+    )
+    protected = {"heapq", "collections", "deque", "numpy", "sort", "heappop", "array"}
+    for seed in range(200):
+        out = ae.rename(text, random.Random(seed))
+        for name in protected:
+            assert f"{name}_v" not in out, (seed, name)
+        assert out.count("import heapq\n") == 1

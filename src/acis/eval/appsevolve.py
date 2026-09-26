@@ -105,9 +105,30 @@ def comment(text: str, rng: random.Random) -> str:
     return "\n".join([*lines[:at], note, *lines[at:]])
 
 
+_IMPORT_LINE = re.compile(r"^\s*(?:from\s+([\w.]+)\s+)?import\s+(.+)$", re.MULTILINE)
+_ATTRIBUTE = re.compile(r"\.\s*([A-Za-z_]\w*)")
+
+
+def _unrenamable(text: str) -> set[str]:
+    """Names a refactor cannot change: what an import binds or names, and attributes of other objects.
+
+    `import heapq` → `import heapq_v85` is not a rename, it is broken code. An `as` alias is ours and may be
+    renamed; the module and the imported symbol are not.
+    """
+    fixed = {m.group(1) for m in _ATTRIBUTE.finditer(text)}
+    for match in _IMPORT_LINE.finditer(text):
+        if match.group(1):
+            fixed.update(match.group(1).split("."))
+        for part in match.group(2).replace("(", " ").replace(")", " ").split(","):
+            words = part.split()
+            if words:
+                fixed.update(words[0].split("."))
+    return fixed
+
+
 def rename(text: str, rng: random.Random) -> str:
     """Rename one identifier consistently. Token-level, so a partial word is never rewritten."""
-    names = sorted({m.group(1) for m in _IDENTIFIER.finditer(text)} - _KEYWORDS)
+    names = sorted({m.group(1) for m in _IDENTIFIER.finditer(text)} - _KEYWORDS - _unrenamable(text))
     if not names:
         return text
     old = rng.choice(names)
