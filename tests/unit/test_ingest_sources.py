@@ -199,3 +199,16 @@ def test_memory_sources_exist_for_tests_and_the_demo():
     spec = SourceSpec(kind="memory", location="demo", options={"versions": {"v1": {"a": "text"}}})
     versions = read(spec)
     assert [v.label for v in versions] == ["v1"] and versions[0].units[0].text == "text"
+
+
+def test_a_files_own_syntax_warnings_do_not_reach_our_output():
+    """`'\\d'` in someone else's code is a true fact about that file and noise in ours: parsing it must stay quiet."""
+    import warnings
+
+    from acis.ingest.sources import parse_meta
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        meta = parse_meta('import re\npattern = "\\d+"\n', "unit.py")
+    assert meta == {"parse_ok": True}
+    assert not [w for w in caught if issubclass(w.category, SyntaxWarning)]

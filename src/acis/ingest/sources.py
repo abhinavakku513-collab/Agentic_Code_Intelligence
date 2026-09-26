@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+import warnings
 import zipfile
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -135,7 +136,11 @@ def parse_meta(text: str, key: str) -> dict[str, Any]:
     if not key.endswith(".py") and not _looks_like_python(text):
         return {"parse_ok": None}
     try:
-        ast.parse(text)
+        # Other people's code is full of `SyntaxWarning`s (invalid escapes, mostly): true facts about the file,
+        # noise in our logs. We read its shape; we are not responsible for its string literals.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            ast.parse(text)
     except (SyntaxError, ValueError, MemoryError, RecursionError):
         return {"parse_ok": False}
     return {"parse_ok": True}
