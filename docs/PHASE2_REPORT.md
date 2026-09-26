@@ -114,6 +114,8 @@ found five more. Four were denial-of-service shapes on inputs this corpus actual
 | 1193ef5 | appending one gate row dirtied the tree, so the second row was refused (would have broken RC1 A+B) | ledger exempt from the dirty check; source changes still refused |
 | 87f82c5 | the vector-cache key covered the whole `prep` section, so a *query*-side change invalidated every cached *document* vector: each G1 cell would have re-embedded the corpus | each side keyed on its own prep; one corpus re-embed, then reused across the grid |
 | 87f82c5 | G1 could not run on the chosen encoder: task dimension crashed on a card with no instructions, a 2048 cell on a 1024-token card was a fake tie, and cells went through hybrid + a ranker trained on the default cell | grid planned from the card (9 cells: V0/V1/V2 × 256/512/1024), dense channel pinned |
+| 068a695 | routing embedded every batch query a second time at full length, to pick a route that cannot change anything for an instruction-free model: G1 paid it per cell, and Mode B would have paid ~3,765 extra encodes in the RC0 cold run | the route is computed only where it can change the answer; G1 query throughput 47 → 109 per minute |
+| c5b122e | `cold=True` was a label: the official run read the persistent vector cache, and the held-out corpus is the dev corpus, so RC0 would have published a warm time as `evaluation_time` (D17) | a cold run builds its encoder without the persistent cache; tested through the real pipeline both ways |
 
 Two of these (4a8e898, ac3c552) are why a gate experiment stalled at "1750/5000 queries" twice. Plus one
 modelling error caught by a contract test (bb24a05): "routed to generic" was first counted as a
@@ -124,7 +126,7 @@ The four defects from the first draft still hold: Mode B building its own encode
 encoder, the G-M tolerance measured from a non-selectable candidate, and `bm25s` raising on a corpus with no
 indexable term.
 
-Suite at the time of writing: **825 passed, 3 xfailed** (the declared guard-hook gaps) on `make test-fast`.
+Suite at the time of writing: **841 passed, 3 xfailed** (the declared guard-hook gaps) on `make test-fast`.
 
 ## 5. What is left for the Phase 2 exit gate
 
@@ -132,8 +134,10 @@ Suite at the time of writing: **825 passed, 3 xfailed** (the declared guard-hook
 |---|---|---|
 | G-M | **decided** | — |
 | G1 prep sweep | **running** since 2026-09-25 (job `g1-statement_like`, `scripts/bench/g1_run.py`) | then `--record-only` from a clean tree and `--decide`. One route suffices: the card has no task strings, and the task string was the only per-route difference, so `generic` would measure identical cells. Until decided, the frozen default stands (V0, 1024) |
-| Real-encoder `make bench` | not run | re-measure latency against spec 02 §7 with `configs/dev.yaml` |
-| RC0 (Mode B, frozen dense) | **not produced** | `configs/official.yaml` does not exist yet (only `official.example.yaml`), and `make rc-official` needs it. Writing it for RC0 is the next build step; then the owner steps below |
+| Determinism across runs and thread counts; cache hit ≡ cold (cosine ≥ 0.9999) | **PASS** — bit-identical vectors across runs, identical top-10 at 8 vs 2 threads (48/48), cached ≡ recomputed at cosine 1.0 | `[ledger:bench-d8ed869255a2]`, `scripts/bench/determinism.py` |
+| README quick start | **written** — fetches the G-M winner and states the cold run's cost (25e19a1) | `README.md` |
+| Real-encoder `make bench` | not run | re-measure latency against spec 02 §7 with `configs/dev.yaml` once G1 frees the CPU |
+| RC0 (Mode B, frozen dense) | **not produced** — `configs/official.yaml` is written (c5b122e) with G1's frozen default prep; it changes only if G1 adopts another cell | the owner steps below |
 | verify-submission on RC0 | pending | follows RC0 |
 
 ### What the owner has to run, in order
