@@ -19,7 +19,9 @@ and each seed's own dev statement is its query. Definitions are fixed here, befo
   so counted a group's own members as duplicates — its grouped duplicate rate is wrong, its NDCG is not);
 * **Best-Revision-Hit@1** — the top answer is the best revision of the query's lineage;
 * **wrong-merge rate** — among revision pairs the cascade put in one lineage, the share whose true lineages
-  differ (pairwise precision error); pairwise recall and F1 are reported with it.
+  differ (pairwise precision error); pairwise recall and F1 are reported with it;
+* **per-relation precision/recall** — the relation each revision reports to its predecessor against the
+  constructed one (an edit that changed nothing counts as `identical`).
 
 Acceptance: grouped beats flat on Evolution-NDCG@10 with a paired-bootstrap CI lower bound > 0, wrong-merge
 ≤ 1 %, grouped Duplicate-Rate@10 ≈ 0. Dev split only; the benchmark repository is removed afterwards.
@@ -31,7 +33,6 @@ import argparse
 import json
 import math
 import random
-import shutil
 import time
 from collections.abc import Mapping, Sequence
 from itertools import combinations
@@ -40,7 +41,7 @@ from typing import Any
 
 from acis.appsdata import apps
 from acis.core.config import load_frozen_config
-from acis.core.paths import acis_home, acis_root
+from acis.core.paths import acis_root
 from acis.core.types import EvolveRequest, SourceSpec
 from acis.embed.factory import build_encoder
 from acis.engine import AcisEngine
@@ -51,6 +52,17 @@ from acis.eval.bootstrap import paired_bootstrap
 REPO = "bonus-bench"
 OPERATORS = (*ae.EDIT_OPERATORS, "rekey", "add", "delete")
 K = 10
+
+
+def _drop(repo: str) -> None:
+    """Remove the benchmark repository, catalog rows included (a bare rmtree left rows behind)."""
+    import contextlib
+
+    from acis.core.errors import NotFound
+    from acis.store.snapshots import drop_repository
+
+    with contextlib.suppress(NotFound):
+        drop_repository(repo)
 
 
 def _dcg(gains: Sequence[float]) -> float:
@@ -80,6 +92,46 @@ def duplicate_rate(ranked: Sequence[tuple[str | None, str]]) -> float:
             dup += 1
         seen.add(lineage)
     return dup / len(top) if top else 0.0
+
+
+def true_relations(evolution: Any, stored: Mapping[tuple[str, str], str]) -> dict[tuple[str, str], str]:
+    """The relation of every revision after v1 to its predecessor, by construction.
+
+    A unit untouched in a version is `identical`; an edit that happened to change nothing is `identical` too (the
+    stored bodies decide, not the operator's intent). When one version edits a unit twice, the last change wins.
+    """
+    out: dict[tuple[str, str], str] = {}
+    labels = list(evolution.labels)
+    for index, label in enumerate(labels[1:], start=1):
+        previous = labels[index - 1]
+        changed = {c.to_key: c for c in evolution.changes.get(label, ()) if c.to_key}
+        for (version, key), body in stored.items():
+            if version != label:
+                continue
+            change = changed.get(key)
+            if change is None or change.relation == "modified" and stored.get((previous, key)) == body:
+                out[(label, key)] = "identical"
+            else:
+                out[(label, key)] = change.relation
+    return out
+
+
+def per_relation(index: Any, truth: Mapping[tuple[str, str], str]) -> dict[str, dict[str, float]]:
+    """Precision and recall of the relation each lineage member reports, against the constructed one."""
+    predicted = {(m.version, m.key): m.relation for lin in index.lineages for m in lin.members if m.version != "v1"}
+    relations = sorted(set(truth.values()) | set(predicted.values()))
+    out: dict[str, dict[str, float]] = {}
+    for rel in relations:
+        tp = sum(1 for k, r in predicted.items() if r == rel and truth.get(k) == rel)
+        n_pred = sum(1 for r in predicted.values() if r == rel)
+        n_true = sum(1 for r in truth.values() if r == rel)
+        out[rel] = {
+            "precision": tp / n_pred if n_pred else float("nan"),
+            "recall": tp / n_true if n_true else float("nan"),
+            "n_true": float(n_true),
+            "n_predicted": float(n_pred),
+        }
+    return out
 
 
 def pairwise(index: Any, truth: Mapping[tuple[str, str], str]) -> dict[str, float]:
@@ -124,7 +176,7 @@ def measure(config_path: str, *, n: int, versions: int, edits: int, seed: int) -
     )
 
     engine = AcisEngine.from_config(config, encoder=build_encoder(config))
-    shutil.rmtree(acis_home() / "repos" / REPO, ignore_errors=True)
+    _drop(REPO)
     started = time.perf_counter()
     engine.ingest(SourceSpec(kind="memory", location=REPO, options=evolution.as_source_options()), repo_id=REPO)
     ingest_s = time.perf_counter() - started
@@ -170,6 +222,7 @@ def measure(config_path: str, *, n: int, versions: int, edits: int, seed: int) -
 
     boot = paired_bootstrap(per_query["grouped"], per_query["flat"])
     merge = pairwise(index, truth)
+    relations = per_relation(index, true_relations(evolution, stored))
     mean = lambda xs: sum(xs) / len(xs) if xs else 0.0  # noqa: E731
     report = {
         "encoder": engine.encoder.name if engine.encoder else "none",
@@ -190,6 +243,7 @@ def measure(config_path: str, *, n: int, versions: int, edits: int, seed: int) -
         "best_revision_hit1_grouped": mean(hit1["grouped"]),
         "best_revision_hit1_flat": mean(hit1["flat"]),
         **merge,
+        "per_relation": relations,
         "ingest_seconds": round(ingest_s, 1),
         "search_seconds": round(search_s, 1),
     }
@@ -213,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         report = measure(args.config, n=args.n, versions=args.versions, edits=args.edits, seed=args.seed)
     finally:
-        shutil.rmtree(acis_home() / "repos" / REPO, ignore_errors=True)
+        _drop(REPO)
     if not args.no_ledger:
         row = (
             ledger.LedgerRowBuilder(kind="bench")

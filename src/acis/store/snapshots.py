@@ -467,6 +467,23 @@ def _is_serveable(repo_id: str, snapshot_id: str) -> bool:
     return True
 
 
+def drop_repository(repo_id: str) -> None:
+    """Remove a repository: its catalog rows first, then its directory. Shared CAS blobs stay (other repositories
+    may hold the same content).
+
+    The order is the point. Deleting the directory first and crashing leaves catalog rows pointing at snapshots
+    that no longer exist — the state that made a later, shorter history under the same id fail with NotFound. A
+    crash after the catalog step leaves only an orphan directory, which is inert: nothing refers to it.
+    """
+    layout.safe_name(repo_id, what="repo id")
+    with catalog.open_catalog() as db:
+        if not catalog.get_repo_exists(db, repo_id):
+            raise NotFound(f"no repository {repo_id!r}")
+        catalog.drop_repo(db, repo_id)
+    shutil.rmtree(layout.repo_root(repo_id), ignore_errors=True)
+    log.info("repo.dropped", repo=repo_id)
+
+
 def history(repo_id: str) -> list[dict[str, Any]]:
     """The journal for one repository, oldest first — what happened, in the order it happened."""
     with catalog.open_catalog() as db:
@@ -515,6 +532,7 @@ def _fsync_tree(path: Path) -> None:
 
 __all__ = [
     "SNAPSHOT_PREFIX",
+    "drop_repository",
     "STATES",
     "SnapshotRecord",
     "StoredUnit",

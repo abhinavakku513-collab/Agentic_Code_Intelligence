@@ -10,7 +10,7 @@ So the cascade runs cheapest-and-most-certain first, and every stage stores the 
 | stage | rule | relation | certainty |
 |---|---|---|---|
 | S0 | same key, same body hash | `identical` | certain |
-| S1 | same key: similarity ≥ θ_mod → `modified`, below it → `replaced` (a rewrite in place; still linked by its key) | high |
+| S1 | same key: `modified` at similarity ≥ θ_mod, else `replaced` (rewritten in place) | high |
 | S2 | same body under a different key | `moved` | high |
 | S3 | name-insensitive normalised body equal | `renamed` | medium-high |
 | S4 | leftover removed × added, best assignment ≥ θ_rep | `replaced` | low-medium, always labelled |

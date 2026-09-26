@@ -127,6 +127,13 @@ def get_repo_exists(db: sqlite3.Connection, repo_id: str) -> bool:
     return db.execute("SELECT 1 FROM repos WHERE repo_id = ?", (repo_id,)).fetchone() is not None
 
 
+def drop_repo(db: sqlite3.Connection, repo_id: str) -> None:
+    """Remove every row that belongs to one repository. Explicit rather than cascaded: journal and jobs have no
+    foreign key, and a row left behind here is exactly what made a dropped repository haunt the next ingest."""
+    for table in ("jobs", "journal", "versions", "snapshots", "repos"):
+        db.execute(f"DELETE FROM {table} WHERE repo_id = ?", (repo_id,))  # noqa: S608 — fixed table names
+
+
 def list_repos(db: sqlite3.Connection) -> list[sqlite3.Row]:
     return list(db.execute("SELECT * FROM repos ORDER BY repo_id"))
 
@@ -279,6 +286,7 @@ __all__ = [
     "SCHEMA",
     "SCHEMA_VERSION",
     "get_job",
+    "drop_repo",
     "get_repo_exists",
     "get_snapshot",
     "get_version",

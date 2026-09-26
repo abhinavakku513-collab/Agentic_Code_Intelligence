@@ -259,3 +259,36 @@ def test_a_rebuilt_snapshot_is_bit_identical_whether_rows_were_copied_or_embedde
 
     assert incremental_id == scratch_id
     np.testing.assert_array_equal(reused, embedded)
+
+
+# -- removing a repository -------------------------------------------------------------------------------------
+def test_a_dropped_repository_leaves_nothing_a_later_ingest_can_trip_over(repo):
+    """Deleting a repository's directory left its catalog rows behind: a later, shorter history under the same id
+    inherited the old v3 pointing at a deleted snapshot, and the first lineage query raised NotFound."""
+    from acis.store import snapshots
+
+    snapshots.drop_repository("demo")
+    fresh = engine()
+    from acis.store import catalog
+
+    with catalog.open_catalog() as db:
+        assert "demo" not in [str(r["repo_id"]) for r in catalog.list_repos(db)]
+    fresh.ingest(memory_source({"v1": V1, "v2": V2}), repo_id="demo")
+    assert [v["label"] for v in fresh.versions("demo")] == ["v1", "v2"]
+    assert fresh.lineage_index("demo").size > 0
+
+
+def test_dropping_a_repository_leaves_other_repositories_and_shared_content_alone(repo):
+    from acis.store import snapshots
+
+    repo.ingest(memory_source({"v1": V1}), repo_id="other")
+    snapshots.drop_repository("demo")
+    response = repo.search(SearchRequest(query="bubble sort", repo_id="other", top_k=2))
+    assert "sort.py" in keys(response)
+
+
+def test_dropping_an_unknown_repository_is_refused():
+    from acis.store import snapshots
+
+    with pytest.raises(NotFound):
+        snapshots.drop_repository("never-existed")

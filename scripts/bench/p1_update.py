@@ -20,13 +20,12 @@ from __future__ import annotations
 import argparse
 import json
 import random
-import shutil
 import time
 from pathlib import Path
 from typing import Any
 
 from acis.core.config import load_frozen_config
-from acis.core.paths import acis_home, acis_root
+from acis.core.paths import acis_root
 from acis.core.types import SearchRequest, SourceSpec
 from acis.embed.factory import build_encoder
 from acis.embed.scorecard import peak_rss_mb, percentiles
@@ -37,6 +36,17 @@ from acis.eval.appsevolve import constant, rename
 TARGET_S = 30.0
 CHANGE_SIZES = (1, 10, 100)
 REPO = "p1-bench"
+
+
+def _drop(repo: str) -> None:
+    """Remove the benchmark repository, catalog rows included (a bare rmtree left rows behind)."""
+    import contextlib
+
+    from acis.core.errors import NotFound
+    from acis.store.snapshots import drop_repository
+
+    with contextlib.suppress(NotFound):
+        drop_repository(repo)
 
 
 def base_corpus(n_units: int) -> dict[str, str]:
@@ -160,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\nwritten : {out}" + (f"   ledger={run_id}" if run_id else "   (not recorded)"))
 
     if not args.keep:
-        shutil.rmtree(acis_home() / "repos" / REPO, ignore_errors=True)
+        _drop(REPO)
     return 0
 
 
