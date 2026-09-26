@@ -314,6 +314,17 @@ class AcisEngine(VersionedEngineMixin):
         """Routing v1.1 (spec 10 §4). See `route_decision` for the signals and the reason."""
         return cast(Route, self.route_decision(query, availability=availability).route)
 
+    def encoding_route(self, query: str) -> Route:
+        """The route a query is *encoded* with — computed only when it can change the vector.
+
+        Routing embeds the query itself (the OOD signal), so for an encoder whose input is the same on every route
+        it would be a second full-length forward pass per query that changes nothing. An encoder that does not
+        declare `route_sensitive` is assumed sensitive.
+        """
+        if self.encoder is not None and not getattr(self.encoder, "route_sensitive", True):
+            return "generic"
+        return self.route(query)
+
     def route_decision(self, query: str, *, availability: float | None = None) -> Any:
         """The full decision: route, OOD score, feature availability and why.
 
@@ -623,8 +634,10 @@ class AcisEngine(VersionedEngineMixin):
         query, _truncated = self.normalise_query(text)
         # The route chooses the instruction the query is encoded with (spec 02 §4, stage 2). `search` has already
         # computed it; the batch surface has not, and routing is a pure function of the query, so it is safe here.
-        route = route if route is not None else self.route(query)
         mode = str(self.config.get("run.channel", "auto"))
+        if route is None:
+            # On the hybrid channel the route picks the ranker or the generic path, so it always matters there.
+            route = self.route(query) if mode == "hybrid" else self.encoding_route(query)
         dense_available, _ = self._channels()
         sink = counters if counters is not None else self.counters
 

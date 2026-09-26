@@ -59,6 +59,9 @@ class HashingEncoder:
     def submission_capable(self) -> bool:
         return False
 
+    #: A bag of hashed tokens has no instruction, so no route can change its vectors.
+    route_sensitive = False
+
     def encode(
         self, texts: Sequence[str], *, is_query: bool = False, batch_size: int = 64, route: str = "generic"
     ) -> np.ndarray:

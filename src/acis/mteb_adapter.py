@@ -155,12 +155,13 @@ class _EncoderSurface(AbsEncoder):
 
         # Queries are encoded per route, because the route chooses the instruction (INV-15). Grouping keeps the
         # work batched; rows are written back to their input positions, so batching stays unobservable (INV-3).
-        # The route is taken from the *normalised* query, exactly as Mode A takes it (`AcisEngine.search`).
+        # The route is taken from the *normalised* query, exactly as Mode A takes it, and only computed when it can
+        # change the vector (`AcisEngine.encoding_route`): Mode B has no ranker for it to choose.
         out = np.zeros((len(prepared), encoder.dim), dtype=np.float32)
         groups: dict[str, list[int]] = {}
         for i, raw in enumerate(texts):
             normalised, _ = self.engine.normalise_query(raw)
-            groups.setdefault(self.engine.route(normalised), []).append(i)
+            groups.setdefault(self.engine.encoding_route(normalised), []).append(i)
         for route, rows in groups.items():
             vectors = encoder.encode([prepared[i] for i in rows], is_query=True, batch_size=batch_size, route=route)
             out[rows] = np.asarray(vectors, dtype=np.float32)

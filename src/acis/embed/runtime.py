@@ -195,6 +195,16 @@ class EncoderRuntime:
             }
         )
 
+    @property
+    def route_sensitive(self) -> bool:
+        """Whether the route can change a query vector at all: only if the rendered input differs by route.
+
+        A model with no instruction format renders every route identically, so computing a route just to encode
+        with it costs a forward pass (routing embeds the query itself) and changes nothing.
+        """
+        probe = "q"
+        return self.card.format_query(probe, route="statement_like") != self.card.format_query(probe, route="generic")
+
     def with_route_task(self, route: str, task_key: str) -> EncoderRuntime:
         """A runtime that encodes `route` with a different task string — what the G1 sweep varies.
 

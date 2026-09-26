@@ -303,3 +303,77 @@ def test_the_route_is_counted_but_is_not_a_degradation():
     engine.build_snapshot(DOCS, source="route")
     response = engine.search(SearchRequest(query="anything at all", top_k=3))
     assert "ltr_off_route" not in " ".join(response.degradations)
+
+
+# -- the route is computed only where it can change something ----------------------------------------------------
+class InsensitiveEncoder(RecordingEncoder):
+    """A model with no instruction format: every route renders the same input, so the route cannot matter."""
+
+    route_sensitive = False
+
+
+def _engine_with_bank(encoder, channel="dense"):
+    from acis.engine.routing import QueryBank
+
+    cfg = freeze_config({**DEFAULT_CONFIG, "run": {**DEFAULT_CONFIG["run"], "channel": channel}})
+    engine = AcisEngine.from_config(cfg, encoder=encoder)
+    engine._bank = QueryBank.from_vectors(np.eye(encoder.dim, dtype=np.float32), k=2)
+    engine.build_snapshot(DOCS, source="route-cost")
+    encoder.calls.clear()
+    return engine
+
+
+def test_a_route_insensitive_dense_search_encodes_each_query_once():
+    """Routing embeds the query itself; when the route cannot change the vector or the pipeline, that second
+    full-length encode is pure cost — on the official run, one extra forward pass per query."""
+    engine = _engine_with_bank(InsensitiveEncoder())
+    snap = engine.build_snapshot(DOCS, source="route-cost")
+    engine.encoder.calls.clear()
+    engine.search_batch(snap, ["q1", "q2"], ["sort a list", "reverse a string"], top_k=3)
+    assert sum(1 for is_query, _ in engine.encoder.calls if is_query) == 2
+
+
+def test_the_hybrid_channel_still_routes(monkeypatch):
+    """The route picks the ranker or the generic path: there it changes the answer and must be computed."""
+    engine = _engine_with_bank(InsensitiveEncoder(), channel="hybrid")
+    snap = engine.build_snapshot(DOCS, source="route-cost")
+    seen = []
+    monkeypatch.setattr(engine, "route", lambda q, **kw: seen.append(q) or "generic")
+    engine.search_batch(snap, ["q1"], ["sort a list"], top_k=3)
+    assert seen
+
+
+def test_a_route_sensitive_encoder_still_routes(monkeypatch):
+    """An encoder that does not declare itself insensitive is assumed sensitive: the default is the safe one."""
+    engine = _engine_with_bank(RecordingEncoder())
+    snap = engine.build_snapshot(DOCS, source="route-cost")
+    seen = []
+    monkeypatch.setattr(engine, "route", lambda q, **kw: seen.append(q) or "generic")
+    engine.search_batch(snap, ["q1"], ["sort a list"], top_k=3)
+    assert seen
+
+
+def test_the_runtime_is_route_sensitive_only_when_its_input_differs_by_route():
+    from acis.embed.registry import load_card
+    from acis.embed.runtime import EncoderRuntime
+
+    class Backend:
+        dim = 4
+        weights_digest = "w"
+
+    plain = load_card("gte-modernbert-base")  # no instruction format
+    assert EncoderRuntime(card=plain, backend=Backend(), threads=1).route_sensitive is False
+    instructed = replace_card(plain, query_template="{task}: {query}", tasks={"T1": "statement", "T3": "generic"})
+    assert EncoderRuntime(card=instructed, backend=Backend(), threads=1).route_sensitive is True
+    same = replace_card(plain, query_template="{task}: {query}", tasks={"T1": "same", "T3": "same"})
+    assert EncoderRuntime(card=same, backend=Backend(), threads=1).route_sensitive is False
+
+
+def replace_card(card, **fields):
+    from dataclasses import replace
+
+    return replace(card, **fields)
+
+
+def test_the_stand_in_declares_itself_route_insensitive():
+    assert HashingEncoder(dim=16).route_sensitive is False
