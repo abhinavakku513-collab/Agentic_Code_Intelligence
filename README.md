@@ -14,7 +14,7 @@ versions with fast index rebuild) and the Bonus (retrieval across *all* versions
 make setup                       # uv sync — Python 3.12, hash-locked
 make doctor                      # hardware profile -> runs/hardware.json
 make fetch                       # the APPS dataset assets (the only network step)
-make fetch-models MODELS=granite-embedding-small-english-r2   # encoder weights, pinned by commit + file hashes
+make fetch-models MODELS=gte-modernbert-base   # the shipped encoder (G-M), pinned by commit + file hashes
 
 uv run acis search "find the shortest path in a weighted graph"      # P0: free-text retrieval
 make demo                        # the scripted runbook: P0, then P1 live, then the Bonus, then the UI
@@ -29,6 +29,10 @@ search, a channel toggle, version pinning and lineage grouping.
 make reproduce                   # cold official run from empty caches -> runs/<run_id>/
 uv run acis eval verify-submission --run-dir runs/<run_id>
 ```
+
+`configs/official.yaml` is the configuration: `gte-modernbert-base`, Mode B, strict, CPU only. The run is cold on
+purpose — no embedding is read from a cache, so `evaluation_time` includes encoding the whole corpus. On an
+8-core CPU expect about 2.6 hours (projected in `[ledger:gate-055152620da6]`); let it finish uninterrupted.
 
 The official recipe is the one the guidelines specify: `PrePostPipelineEncoder(AbsEncoder)` →
 `mteb.get_task("AppsRetrieval")` → `mteb.evaluate(model, [task], encode_kwargs={"batch_size": 64})`, written
@@ -59,7 +63,8 @@ Every figure below is either a ledger row or a file in `runs/`. Numbers about AC
 | BM25 parity with `mteb/baseline-bm25s` | 100 % identical top-10 on all 5,000 dev queries | `[ledger:dev-8717922a9ca4]`, `[ledger:dev-ee395f07e048]` |
 | Retrieval core latency | p95 16.4 ms at 8,765 units (stand-in encoder; see the note in `docs/PHASE2_REPORT.md`) | `[ledger:bench-b3586309bd8e]` |
 | P1 update time | a 1- or 10-unit change searchable in ~2 s p95 where a full rebuild takes ~11 s, against a 30 s target | `[ledger:bench-9153e49050de]` |
-| Encoder bake-off (G-M) | in progress — candidates, their scores and the decision land in `runs/bakeoff/` | `docs/PHASE2_REPORT.md` |
+| Encoder bake-off (G-M) | `gte-modernbert-base` (149M params) selected at NDCG@10 71.03 on all 5,000 dev queries; the two alternatives were 14 and 17 pt behind | `[ledger:gate-055152620da6]`, `configs/gates/G-M.yaml` |
+| Determinism | bit-identical vectors across runs; identical top-10 rankings at 8 vs 2 threads; cached ≡ recomputed (cosine 1.0) | `[ledger:bench-d8ed869255a2]` |
 
 ## How it is kept honest
 
@@ -91,7 +96,7 @@ states its own contract and names the test that enforces it.
 
 ## Status
 
-Phase 1 (harness) and Track B1 (P1) are complete with reports in `docs/`. Phase 2's engine and both gates are
-built and the bake-off is running on real weights; Phase 4's hybrid ranking and the Bonus are built and measured
-on the dev split. `docs/STATUS.md` is the single source of progress truth, and the PPT and demo video are the
+Phase 1 (harness) and Track B1 (P1) are built, with reports in `docs/`. In Phase 2 the encoder is chosen (G-M),
+the query-preparation sweep (G1) is being measured, and the first release candidate (RC0) is next; Phase 4's
+hybrid ranking and the Bonus are built and measured on the dev split. `docs/STATUS.md` is the single source of progress truth, and the PPT and demo video are the
 owner's (`docs/submission/OWNER_HANDOFF.md`).
