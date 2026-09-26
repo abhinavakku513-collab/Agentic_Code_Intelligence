@@ -10,7 +10,7 @@ So the cascade runs cheapest-and-most-certain first, and every stage stores the 
 | stage | rule | relation | certainty |
 |---|---|---|---|
 | S0 | same key, same body hash | `identical` | certain |
-| S1 | same key, similarity ≥ θ_mod | `modified` | high |
+| S1 | same key: similarity ≥ θ_mod → `modified`, below it → `replaced` (a rewrite in place; still linked by its key) | high |
 | S2 | same body under a different key | `moved` | high |
 | S3 | name-insensitive normalised body equal | `renamed` | medium-high |
 | S4 | leftover removed × added, best assignment ≥ θ_rep | `replaced` | low-medium, always labelled |
@@ -216,7 +216,7 @@ def align(
             links.append(Link(key, key, "identical", 1.0, "S0", {"body_hash": 1.0}))
         else:
             evidence = similarity(before, after)
-            relation = "modified" if evidence["combined"] >= theta_mod else "modified"
+            relation = "modified" if evidence["combined"] >= theta_mod else "replaced"
             # Same key, different body: the key itself is strong evidence, so this stays a link even when the
             # bodies diverge — a rewrite in place is still the same unit.
             links.append(Link(key, key, relation, max(evidence["combined"], theta_mod), "S1", evidence))

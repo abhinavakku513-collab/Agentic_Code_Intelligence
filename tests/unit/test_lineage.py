@@ -41,6 +41,14 @@ def test_an_edit_in_place_stays_the_same_unit():
     assert not links[0].inferred
 
 
+def test_a_rewrite_in_place_stays_the_same_unit_but_says_it_was_replaced():
+    """Same key, a different implementation: still one unit (the key is the evidence), but calling it `modified`
+    tells the reader of a timeline that a sort became a graph search by editing it — the relation must be honest."""
+    links = align.align([rev("a.py", SORT)], [rev("a.py", GRAPH)])
+    assert links[0].relation == "replaced" and links[0].stage == "S1"
+    assert not links[0].inferred and links[0].confidence >= align.FLOOR
+
+
 def test_the_same_bytes_under_a_new_name_is_a_move_and_it_is_certain():
     links = align.align([rev("old.py", SORT)], [rev("new.py", SORT)])
     moved = [link for link in links if link.relation == "moved"]
