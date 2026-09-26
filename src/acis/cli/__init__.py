@@ -174,6 +174,12 @@ def build_parser() -> argparse.ArgumentParser:
     evolve.add_argument("--json", action="store_true")
     evolve.add_argument("--config", default="configs/dev.yaml")
 
+    demo_idx = sub.add_parser("demo-index", help="prebuilt demo index: export the corpus vectors, or import a pack")
+    demo_idx.add_argument("action", choices=["export", "import"])
+    demo_idx.add_argument("path", nargs="?", default="dist/acis-demo-index.zip")
+    demo_idx.add_argument("--config", default="configs/dev.yaml")
+    demo_idx.add_argument("--verify-fraction", type=float, default=0.01, help="share recomputed on import")
+
     report = sub.add_parser("report", help="ledger-backed evidence table")
     report.add_argument("--claims", action="store_true")
     report.add_argument("--out", default="")

@@ -228,6 +228,10 @@ class EncoderRuntime:
             prompt_hash=prompt,
         )
 
+    def document_cache_key(self, text: str) -> str:
+        """The vector-cache key this runtime uses for a (prepared) document — what a demo index is keyed by."""
+        return self._cache_key(self._render(text, is_query=False, route="generic"), is_query=False, route="generic")
+
     def encode(
         self,
         texts: Sequence[str],

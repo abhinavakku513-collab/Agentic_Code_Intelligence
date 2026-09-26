@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from acis.core.errors import InvalidInput
+from acis.core.errors import InvalidInput, NotReady
 from acis.core.paths import acis_root
 from acis.obs.log import configure
 
@@ -369,6 +369,38 @@ def cmd_evolve(args: argparse.Namespace) -> int:
         )
         marks = "".join("*" if step["changed"] else "-" for step in group["timeline"])
         print(f"     timeline {marks}  ({' '.join(step['version'] for step in group['timeline'])})")
+    return 0
+
+
+def cmd_demo_index(args: argparse.Namespace) -> int:
+    """Export or import the prebuilt demo index (docs/spec/09 R9, D17). Never used by the official run."""
+    from acis.appsdata import apps
+    from acis.core.config import load_frozen_config
+    from acis.embed import demo_index
+    from acis.embed.factory import build_encoder
+
+    if not apps.is_available():
+        raise NotReady("the APPS corpus is not fetched; run `make fetch` first")
+    config = load_frozen_config(args.config)
+    runtime = build_encoder(config)
+    if not hasattr(runtime, "document_cache_key"):
+        raise InvalidInput("a demo index needs a real encoder; the configured one is the stand-in")
+    texts = demo_index.prepared_documents(config, [s.text for s in apps.load_corpus()])
+    if args.action == "export":
+        manifest = demo_index.export_index(runtime, texts, args.path, meta={"corpus": "CoIR-Retrieval/apps"})
+        print(
+            f"wrote {args.path}: {manifest['n']} vectors, {manifest['model']}, "
+            f"fingerprint {manifest['fingerprint'][:12]}"
+        )
+        return 0
+    report = demo_index.import_index(runtime, args.path, texts=texts, verify_fraction=args.verify_fraction)
+    if report["already_imported"]:
+        print(f"{args.path}: already imported into this cache")
+        return 0
+    print(
+        f"imported {report['imported']} vectors; recomputed {report['recomputed']}, "
+        f"worst cosine {report['worst_cosine']:.6f}\n{report['label']}"
+    )
     return 0
 
 

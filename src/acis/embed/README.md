@@ -23,6 +23,8 @@ a model-free stand-in encoder that exists to validate the harness.
 | M-15 | Fetching a model downloads safetensors only, resolves the revision to a commit before anything downloads, and pins the commit plus every file hash into the card (G0.4) | `tests/unit/test_model_fetch.py` |
 | M-14 | A card maps route → task key: only `statement_like` uses the APPS-tuned instruction by default, G1 may repoint one route without touching another, and doing so moves the fingerprint | `tests/unit/test_dense_wiring.py` |
 | M-13 | `encode` takes the route: a query's instruction is chosen per route (INV-15), and V2 is the normalised mean of V0 and V1 with no second encode when the query has no structure | `tests/unit/test_dense_wiring.py` |
+| M-16 | Each side of the vector-cache key moves only with its own prep: a query-side change never invalidates document vectors, nor the reverse | `tests/unit/test_dense_wiring.py` |
+| M-17 | The prebuilt demo index (D17) is labelled, checksummed and recomputable: import refuses an altered pack, another model's pack, and a pack whose vectors fail a recompute (cosine ≥ 0.9999); it fills only the vector cache, which a cold official run never reads; no pickle | `tests/unit/test_demo_index.py`, `tests/integration/test_official_dry_run.py` |
 
 **Phase boundary.** The runtime is built against an injected `Backend`, so loading, pooling, batching, caching,
 normalisation and ordering are all tested without weights — when real weights arrive the only untested thing is

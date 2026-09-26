@@ -20,6 +20,10 @@ uv run acis search "find the shortest path in a weighted graph"      # P0: free-
 make demo                        # the scripted runbook: P0, then P1 live, then the Bonus, then the UI
 ```
 
+On a clean machine, put `acis-demo-index.zip` from the GitHub Release in `dist/` first. `make demo` imports it
+(checksums, model fingerprint and a 1 % recompute are verified) instead of embedding the whole corpus, which takes
+hours on a CPU. It is a demo convenience only: the official run is cold and never reads it.
+
 `make demo` ends by serving <http://127.0.0.1:8000/> — the same engine behind a single offline page: free-text
 search, a channel toggle, version pinning and lineage grouping.
 

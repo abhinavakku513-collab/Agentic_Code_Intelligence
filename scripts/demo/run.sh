@@ -19,6 +19,14 @@ QUERY="${QUERY:-shortest path in a weighted graph using a priority queue}"
 
 bold() { printf '\n\033[1m%s\033[0m\n\033[2m%s\033[0m\n' "$1" "$(printf '─%.0s' $(seq ${#1}))"; }
 
+# The prebuilt demo index (D17, spec 09 R9): on a clean machine it saves embedding the whole corpus before the
+# first answer. Verified on import (checksums, model fingerprint, 1 % recomputed); a no-op once imported.
+DEMO_INDEX="${DEMO_INDEX:-dist/acis-demo-index.zip}"
+if [ -f "$DEMO_INDEX" ]; then
+  bold "0 · the prebuilt demo index"
+  $PY acis demo-index import "$DEMO_INDEX" || echo "  (demo index not imported; the corpus will be embedded on first use)"
+fi
+
 bold "1 · P0 · free-text retrieval over the APPS corpus"
 $PY acis search "$QUERY" --top-k 5 || {
   echo "  (the APPS corpus is not fetched; run \`make fetch\` for act 1)"; }
