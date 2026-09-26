@@ -1,0 +1,22 @@
+{
+  "cache_corpus_forward_calls": 0,
+  "cache_min_cosine": 1.0,
+  "config": "configs/dev.yaml",
+  "encoder": "Alibaba-NLP/gte-modernbert-base",
+  "ledger_run_id": "bench-d8ed869255a2",
+  "min_cosine_required": 0.9999,
+  "n_docs_sampled": 48,
+  "n_queries": 48,
+  "numeric_profile": "cpu-fp32",
+  "passes": true,
+  "run_max_abs_diff": 0.0,
+  "run_vectors_identical": true,
+  "seconds": 466.0,
+  "seed": 0,
+  "thread_min_cosine": 1.0,
+  "thread_top10_identical": 48,
+  "threads": [
+    8,
+    2
+  ]
+}
