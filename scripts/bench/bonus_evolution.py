@@ -14,7 +14,9 @@ and each seed's own dev statement is its query. Definitions are fixed here, befo
   head alone; a 20-query smoke run showed that makes the ideal list unattainable for any grouped answer (the
   other members' gains can never be earned), so it penalised grouping by construction. It was replaced before
   the benchmark was run;
-* **Duplicate-Rate@10** — share of the top 10 whose true lineage already appeared above it;
+* **Duplicate-Rate@10** — share of the top 10 answers whose true lineage already appeared above it; for grouped,
+  the answers are its lineages (the first recorded run, bench-0ae8ddf9d4be, computed it on the expanded list and
+  so counted a group's own members as duplicates — its grouped duplicate rate is wrong, its NDCG is not);
 * **Best-Revision-Hit@1** — the top answer is the best revision of the query's lineage;
 * **wrong-merge rate** — among revision pairs the cascade put in one lineage, the share whose true lineages
   differ (pairwise precision error); pairwise recall and F1 are reported with it.
@@ -157,9 +159,12 @@ def measure(config_path: str, *, n: int, versions: int, edits: int, seed: int) -
             g_ranked.extend((truth.get((m["version"], m["key"])), stored[(m["version"], m["key"])]) for m in rest)
         flat = engine.retrieve_evolution(EvolveRequest(query=queries[qid], repo_id=REPO, top_k=K, flat=True))
         f_ranked = [(truth.get((str(h.unit.version_id), h.unit.key)), h.unit.body_hash) for h in flat.flat_results]
-        for name, ranked in (("grouped", g_ranked), ("flat", f_ranked)):
+        # Duplicate rate is a property of the *answer list*: for grouped that is the lineages it returns (one
+        # entry each), not the expansion used for NDCG — within a group, its own members are not duplicates.
+        g_heads = [(truth.get((g["best"]["version"], g["best"]["key"])), "") for g in grouped.groups]
+        for name, ranked, answers in (("grouped", g_ranked, g_heads), ("flat", f_ranked, f_ranked)):
             per_query[name][qid] = evolution_ndcg(ranked, target, best, others)
-            dup[name].append(duplicate_rate(ranked))
+            dup[name].append(duplicate_rate(answers))
             hit1[name].append(1.0 if ranked and ranked[0] == (target, best) else 0.0)
     search_s = time.perf_counter() - started
 
