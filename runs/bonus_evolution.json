@@ -1,0 +1,42 @@
+{
+  "best_revision_hit1_flat": 0.72,
+  "best_revision_hit1_grouped": 0.72,
+  "ci": [
+    -0.40658485574671743,
+    0.24310571978621498
+  ],
+  "config": "configs/dev.yaml",
+  "delta_pts": -0.07873315108142168,
+  "duplicate_rate10_flat": 0.7663333333333333,
+  "duplicate_rate10_grouped": 0.0,
+  "edits_per_version": 60,
+  "encoder": "Alibaba-NLP/gte-modernbert-base",
+  "evolution_ndcg10_flat": 0.8022507925576948,
+  "evolution_ndcg10_grouped": 0.8014634610468806,
+  "ingest_seconds": 3.0,
+  "ledger_run_id": "bench-52d48f680740",
+  "lineages_predicted": 323,
+  "lineages_true": 323,
+  "n_queries": 300,
+  "operators": [
+    "reformat",
+    "comment",
+    "rename",
+    "reorder",
+    "constant",
+    "branch",
+    "rekey",
+    "add",
+    "delete"
+  ],
+  "pairwise_f1": 1.0,
+  "pairwise_precision": 1.0,
+  "pairwise_recall": 1.0,
+  "passes": false,
+  "predicted_pairs": 2895.0,
+  "search_seconds": 13.3,
+  "seed": 0,
+  "true_pairs": 2895.0,
+  "versions": 5,
+  "wrong_merge_rate": 0.0
+}
