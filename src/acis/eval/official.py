@@ -167,6 +167,7 @@ def run_mode(
     *,
     touches: int,
     task_factory: Callable[[], Any] | None = None,
+    cold: bool = True,
 ) -> ModeResult:
     """One mode through the real mteb pipeline, with the ranking captured so run files can be written.
 
@@ -181,7 +182,7 @@ def run_mode(
     os.environ[RUN_DIR_ENV] = str(run_dir)
     os.environ[TOUCH_ENV] = str(touches)
     try:
-        return _run_mode_inner(config_path, mode, run_dir, touches=touches, task_factory=task_factory)
+        return _run_mode_inner(config_path, mode, run_dir, touches=touches, task_factory=task_factory, cold=cold)
     finally:
         for key, value in previous.items():
             if value is None:
@@ -197,12 +198,14 @@ def _run_mode_inner(
     *,
     touches: int,
     task_factory: Callable[[], Any] | None = None,
+    cold: bool = True,
 ) -> ModeResult:
     import mteb  # noqa: PLC0415
 
     from acis.mteb_adapter import PrePostPipelineEncoder  # noqa: PLC0415 — after ACIS_MODE is set
 
-    model = PrePostPipelineEncoder(config_path)
+    # Cold means cold (D17): no persistent vector cache, so every document is encoded inside the timed pass.
+    model = PrePostPipelineEncoder(config_path, vector_cache=not cold)
     task = task_factory() if task_factory is not None else mteb.get_task(APPS.task)
 
     started = time.perf_counter()
@@ -351,7 +354,7 @@ def run_pipeline(
 
     results: dict[str, ModeResult] = {}
     for m in modes:
-        results[m] = run_mode(config_path, m, run_dir, touches=touches, task_factory=task_factory)
+        results[m] = run_mode(config_path, m, run_dir, touches=touches, task_factory=task_factory, cold=cold)
         write_official_json(results[m].task_result, run_dir / (MODE_A_JSON if m == "A" else MODE_B_JSON))
 
     primary_result = results[primary]

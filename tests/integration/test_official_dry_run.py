@@ -372,3 +372,60 @@ def test_appending_one_row_does_not_block_the_next(tmp_path, monkeypatch):
 
     FakeRun.stdout = " M runs/ledger.jsonl\n M src/acis/engine/core.py\n"
     assert _working_tree_is_dirty(), "an actual source change must still fail the check"
+
+
+# -- a cold run is cold (D17) ------------------------------------------------------------------------------------
+def _record_cache_flag(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """Spy on the one factory every surface builds its encoder through."""
+    from acis.embed import factory
+
+    seen: list[bool] = []
+    real = factory.build_encoder
+
+    def spy(config: Any, *, cache: bool = True) -> Any:
+        seen.append(cache)
+        return real(config, cache=cache)
+
+    monkeypatch.setattr(factory, "build_encoder", spy)
+    return seen
+
+
+@pytest.mark.slow
+def test_a_cold_run_never_reads_the_persistent_vector_cache(tmp_path, official_config, isolated_ledger, monkeypatch):
+    """The held-out corpus *is* the dev corpus, so a cold run that read the dev vector cache would skip the whole
+    corpus encode and publish a warm time as `evaluation_time` — exactly what D17 forbids."""
+    seen = _record_cache_flag(monkeypatch)
+    run_pipeline(
+        rc="RC0",
+        mode="B",
+        config_path=official_config,
+        run_dir=tmp_path / "cold",
+        cold=True,
+        ledgered=False,
+        task_factory=_task_factory("Cold"),
+    )
+    assert seen and not any(seen)
+
+
+@pytest.mark.slow
+def test_a_warm_verification_may_use_the_cache(tmp_path, official_config, isolated_ledger, monkeypatch):
+    seen = _record_cache_flag(monkeypatch)
+    run_pipeline(
+        rc="RC0",
+        mode="B",
+        config_path=official_config,
+        run_dir=tmp_path / "warm",
+        cold=False,
+        ledgered=False,
+        task_factory=_task_factory("Warm"),
+    )
+    assert seen and all(seen)
+
+
+def test_the_adapter_can_be_built_without_the_vector_cache(official_config, monkeypatch):
+    from acis.mteb_adapter import PrePostPipelineEncoder
+
+    seen = _record_cache_flag(monkeypatch)
+    PrePostPipelineEncoder(official_config, vector_cache=False).engine  # noqa: B018 — building is the test
+    PrePostPipelineEncoder(official_config).engine  # noqa: B018
+    assert seen == [False, True]

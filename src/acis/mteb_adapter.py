@@ -76,8 +76,11 @@ def write_official_json(task_result: Any, path: str | Path) -> Path:
 class _EncoderSurface(AbsEncoder):
     """Mode B: an honest dense encoder over the same model and the same preprocessing as Mode A."""
 
-    def __init__(self, config_path: str | None = None) -> None:
+    def __init__(self, config_path: str | None = None, *, vector_cache: bool = True) -> None:
         self.cfg: FrozenConfig = load_frozen_config(config_path or os.environ.get(CONFIG_ENV, "configs/dev.yaml"))
+        #: A cold official run passes False (D17): the held-out corpus is the dev corpus, so the persistent vector
+        #: cache would hand it every document vector and the published time would be a warm one.
+        self.vector_cache = vector_cache
         self._engine: AcisEngine | None = None
         self._meta = make_model_meta(self.cfg)
         self.adapter_invocations = 0
@@ -106,7 +109,7 @@ class _EncoderSurface(AbsEncoder):
         """
         from acis.embed.factory import build_encoder  # noqa: PLC0415
 
-        encoder = build_encoder(self.cfg)
+        encoder = build_encoder(self.cfg, cache=self.vector_cache)
         if self.cfg.strict and not encoder.submission_capable and not self.harness_dry_run:
             raise StrictViolation(
                 "the hashing stand-in encoder may not serve a strict run; it exists to validate the harness only"

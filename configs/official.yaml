@@ -1,0 +1,19 @@
+# Official configuration — RC0 (D8: best frozen dense encoder, Mode B). Paths resolve from the repo root (D16).
+# Its ranking-relevant part is hashed into ModelMeta.revision, so any edit is a new revision: change it only via a
+# gate decision, and never between an RC's run and its verification. RC1 supersedes this file (mode AB, G-AB).
+#
+# Query prep is the frozen G1 default (V0, 1024 = 768 head + 256 tail). G1 is being measured on all 5,000 dev
+# queries; if it adopts a different cell, this section changes before RC0 runs, otherwise it stands.
+run:      {mode: B, primary_mode: B, strict: true, device: cpu, threads: auto_physical, seed: 0, channel: dense,
+           cold_official: true, test_touch_budget: 6}
+model:    {encoder: gte-modernbert-base, dim: 768, config: configs/models/gte-modernbert-base.yaml,
+           numeric_profile: cpu-fp32}
+prep:     {query: {version: q1, view: V0, max_tokens: 1024, head: 768, tail: 256},
+           doc:   {version: d1, max_tokens: 1024, head: 768, tail: 256}}
+lexical:  {k1: 1.5, b: 0.75, delta: 0.5, method: lucene, stemmer: english, tokenizer: code}   # unused in Mode B
+compose:  {mode_a_scores: rank_derived}
+# Provenance only (an operational section: not hashed). Every decision this file encodes, by ledger row.
+gates:
+  G_M: {decision: gte-modernbert-base, ledger: gate-055152620da6, file: configs/gates/G-M.yaml}
+  G1: {decision: pending — frozen default V0/1024 stands until decided, file: configs/gates/G1.yaml}
+  G3: {decision: not run — no GPU, frozen base ships, adr: docs/adr/0007-no-gpu-adaptation.md}
