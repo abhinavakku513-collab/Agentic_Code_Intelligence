@@ -96,8 +96,8 @@ def test_identical_text_shares_one_entry(tmp_path):
 def test_round_trip_is_exact(tmp_path):
     store = cache.VectorCache.open(tmp_path, dim=4)
     vector = np.array([0.1, -0.2, 0.3, 0.4], dtype=np.float32)
-    store.put("abcd1234", vector)
-    fetched = store.get("abcd1234")
+    store.put("a" * 64, vector)
+    fetched = store.get("a" * 64)
     assert fetched is not None
     np.testing.assert_array_equal(fetched, vector)
 
@@ -111,29 +111,29 @@ def test_a_miss_is_a_miss_not_an_exception(tmp_path):
 def test_a_corrupt_entry_is_a_miss_rather_than_a_crash(tmp_path):
     """The worst case for a damaged cache entry is recomputing it, never failing the run."""
     store = cache.VectorCache.open(tmp_path)
-    store.put("deadbeef", np.ones(3, dtype=np.float32))
+    store.put("d" * 64, np.ones(3, dtype=np.float32))
     store._mem.clear()
-    store.path_for("deadbeef").write_bytes(b"not a numpy file")
-    assert store.get("deadbeef") is None
+    store.path_for("d" * 64).write_bytes(b"not a numpy file")
+    assert store.get("d" * 64) is None
 
 
 def test_a_wrong_dimension_is_refused(tmp_path):
     store = cache.VectorCache.open(tmp_path, dim=4)
     with pytest.raises(ValueError, match="dimension"):
-        store.put("k", np.ones(8, dtype=np.float32))
+        store.put("f" * 64, np.ones(8, dtype=np.float32))
 
 
 def test_writes_are_atomic(tmp_path):
     """A crashed run must leave no half-written vector behind for the next run to trust."""
     store = cache.VectorCache.open(tmp_path)
-    store.put("cafebabe", np.ones(4, dtype=np.float32))
+    store.put("c" * 64, np.ones(4, dtype=np.float32))
     leftovers = list(tmp_path.rglob("*.tmp"))
     assert leftovers == []
 
 
 def test_get_many_reports_what_is_missing(tmp_path):
     store = cache.VectorCache.open(tmp_path)
-    keys = ["a" * 8, "b" * 8, "c" * 8]
+    keys = ["a" * 64, "b" * 64, "c" * 64]
     store.put(keys[1], np.ones(2, dtype=np.float32))
     found, missing = store.get_many(keys)
     assert set(found) == {1} and missing == [0, 2]
@@ -142,7 +142,7 @@ def test_get_many_reports_what_is_missing(tmp_path):
 def test_the_audit_catches_a_cache_that_disagrees_with_the_model(tmp_path):
     """docs/spec/02 §3: recompute 1 % of hits and require cosine ≥ 0.9999."""
     store = cache.VectorCache.open(tmp_path)
-    good, bad = "1" * 8, "2" * 8
+    good, bad = "1" * 64, "2" * 64
     store.put(good, np.array([1.0, 0.0], dtype=np.float32))
     store.put(bad, np.array([1.0, 0.0], dtype=np.float32))
 

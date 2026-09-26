@@ -143,3 +143,29 @@ def test_importing_the_same_pack_twice_is_a_no_op(tmp_path):
     second = demo_index.import_index(target, path, texts=DOCS, verify_fraction=1.0)
     assert first["imported"] == len(DOCS) and second["imported"] == 0 and second["already_imported"]
     assert target.forward_calls == before
+
+
+def test_a_pack_cannot_write_outside_the_cache(tmp_path):
+    """Keys become file names. A pack is a downloaded file whose manifest an attacker also controls, so checksums
+    cannot stop `../../x`: the cache refuses any key that is not a content hash."""
+    _, path = exported(tmp_path)
+    with zipfile.ZipFile(path) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        keys = json.loads(zf.read("keys.json"))
+    keys[-1] = "../../../../escaped"
+    forged = json.dumps(keys).encode()
+    import hashlib
+
+    manifest["sha256"]["keys.json"] = hashlib.sha256(forged).hexdigest()
+    _rewrite(path, "keys.json", forged)
+    _rewrite(path, "manifest.json", json.dumps(manifest).encode())
+    with pytest.raises(InvalidInput, match="key"):
+        demo_index.import_index(runtime(tmp_path, "dst"), path, texts=DOCS, verify_fraction=0.0)
+    assert not list(tmp_path.rglob("escaped*"))
+
+
+def test_the_cache_itself_refuses_a_key_that_is_not_a_content_hash(tmp_path):
+    cache = VectorCache.open(tmp_path / "c")
+    for bad in ("../x", "a" * 63, "A" * 64, "g" * 64, ""):
+        with pytest.raises(ValueError):
+            cache.put(bad, np.zeros(4, dtype=np.float32))

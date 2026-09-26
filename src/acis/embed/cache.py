@@ -20,6 +20,7 @@ vector database). Writes are atomic: a crashed run leaves no half-written vector
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -59,6 +60,9 @@ def vector_key(
     )
 
 
+_KEY = re.compile(r"[0-9a-f]{64}")
+
+
 @dataclass(slots=True)
 class VectorCache:
     """A content-addressed store of embedding vectors."""
@@ -77,7 +81,13 @@ class VectorCache:
         return cls(root=path, dim=dim)
 
     def path_for(self, key: str) -> Path:
-        """Fanned out by the first bytes of the key: one flat directory with 8,765+ entries is slow to list."""
+        """Fanned out by the first bytes of the key: one flat directory with 8,765+ entries is slow to list.
+
+        A key becomes a file name, and keys can arrive from outside (a demo index pack): anything but a lowercase
+        SHA-256 hex digest is refused, so no key can name a path outside the cache.
+        """
+        if not _KEY.fullmatch(key):
+            raise ValueError("a vector-cache key must be a 64-character lowercase hex digest")
         return self.root / key[:FANOUT] / key[FANOUT : FANOUT * 2] / f"{key}.npy"
 
     def get(self, key: str) -> np.ndarray | None:

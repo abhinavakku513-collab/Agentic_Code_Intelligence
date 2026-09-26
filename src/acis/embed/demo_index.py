@@ -20,6 +20,7 @@ import hashlib
 import io
 import json
 import random
+import re
 import zipfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -34,6 +35,7 @@ from acis.prep.truncate import head_tail
 FORMAT = "acis-demo-index/1"
 LABEL = "Prebuilt DEMO index — document vectors for `make demo` only. The official run never reads it (D17)."
 MIN_COSINE = 0.9999
+_HEX_KEY = re.compile(r"[0-9a-f]{64}")
 MEMBERS = ("vectors.npy", "keys.json")
 #: A pack is a downloaded file, so its members are size-checked before anything is decompressed (zip bombs).
 #: 8,765 x 1,024 fp32 is ~36 MB; the cap leaves room for a larger corpus without trusting the archive.
@@ -134,6 +136,9 @@ def import_index(
     keys = [str(k) for k in json.loads(payload["keys.json"])]
     if vectors.shape[0] != len(keys):
         raise InvalidInput("demo index vectors and keys disagree in length")
+    bad = [k for k in keys if not _HEX_KEY.fullmatch(k)]
+    if bad:
+        raise InvalidInput("demo index holds a cache key that is not a content hash", n_bad=len(bad))
 
     checked, worst = 0, 1.0
     if verify_fraction > 0:
