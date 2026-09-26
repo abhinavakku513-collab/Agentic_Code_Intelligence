@@ -247,7 +247,12 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
 
     @app.get("/readyz")
     def readyz() -> dict[str, Any]:
-        return {"ready": getattr(engine, "encoder", None) is not None, "uptime_s": round(time.time() - started, 1)}
+        return {
+            "ready": getattr(engine, "encoder", None) is not None,
+            # Whether the default corpus of the page (`repo_id="-"`, the APPS one) can be searched yet.
+            "p0_corpus": bool(getattr(engine, "_snapshots", None)),
+            "uptime_s": round(time.time() - started, 1),
+        }
 
     @app.get("/metrics", response_class=PlainTextResponse)
     def metrics() -> str:
@@ -296,6 +301,29 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
     return app
 
 
+def preload_p0(engine: Any) -> str | None:
+    """Build the in-memory APPS snapshot the page searches by default (`repo_id="-"`).
+
+    Without it the service starts, and a judge's first free-text query answers "no snapshot has been built yet".
+    Document vectors come from the content-addressed cache when they are there; without the dataset the service
+    still starts, with the versioned repositories only, and `/readyz` says so.
+    """
+    from acis.appsdata import apps
+
+    if not apps.is_available():
+        log.info("api.p0_unavailable", reason="dataset assets not fetched (make fetch)")
+        return None
+    started = time.perf_counter()
+    snapshot = engine.build_snapshot(apps.load_corpus(), source="serve:p0")
+    log.info(
+        "api.p0_ready",
+        snapshot=snapshot.snapshot_id,
+        units=snapshot.n_units,
+        seconds=round(time.perf_counter() - started, 1),
+    )
+    return str(snapshot.snapshot_id)
+
+
 def serve(
     *,
     host: str = "127.0.0.1",
@@ -311,8 +339,15 @@ def serve(
             f"refusing to bind {host} without {TOKEN_ENV}: a non-loopback service needs a bearer token",
             host=host,
         )
+    from acis.core.config import load_frozen_config
+    from acis.embed.factory import build_encoder
+    from acis.engine import AcisEngine
+
+    config = load_frozen_config(config_path)
+    engine = AcisEngine.from_config(config, encoder=build_encoder(config))
+    preload_p0(engine)
     log.info("api.serving", host=host, port=port, config=config_path)
-    uvicorn.run(create_app(config_path=config_path), host=host, port=port, reload=reload, log_level="info")
+    uvicorn.run(create_app(engine, config_path=config_path), host=host, port=port, reload=reload, log_level="info")
 
 
-__all__ = ["STATIC_DIR", "STATUS", "TOKEN_ENV", "create_app", "serve"]
+__all__ = ["STATIC_DIR", "STATUS", "TOKEN_ENV", "create_app", "preload_p0", "serve"]

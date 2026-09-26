@@ -148,3 +148,33 @@ def test_the_ui_is_served_and_references_no_remote_asset(client):
         assert client.get(f"/ui/{asset}").status_code == 200
     assert "http://" not in page and "https://" not in page
     assert "//cdn" not in client.get("/ui/app.js").text
+
+
+# -- what `acis serve` starts with ------------------------------------------------------------------------------
+def test_the_served_app_can_search_the_p0_corpus_from_its_first_request(tmp_path, monkeypatch):
+    """The page's default corpus is the APPS one (`repo_id="-"`). Served without a snapshot, a judge's first
+    free-text query answered "no snapshot has been built yet" — the fixture above hid it by building one."""
+    monkeypatch.setenv("ACIS_HOME", str(tmp_path / "home"))
+    from acis.api import app as api_app
+    from acis.appsdata import apps
+
+    monkeypatch.setattr(apps, "is_available", lambda: True)
+    monkeypatch.setattr(apps, "load_corpus", lambda: list(CORPUS))
+    engine = AcisEngine.from_config(freeze_config(DEFAULT_CONFIG), encoder=HashingEncoder(dim=256))
+    assert api_app.preload_p0(engine) is not None
+    client = TestClient(api_app.create_app(engine))
+
+    assert client.get("/readyz").json()["p0_corpus"] is True
+    response = client.post("/v1/search", json={"query": "shortest path with a heap", "repo_id": "-", "top_k": 2})
+    assert response.status_code == 200 and len(response.json()["results"]) == 2
+
+
+def test_without_the_dataset_the_service_still_starts_and_says_so(tmp_path, monkeypatch):
+    monkeypatch.setenv("ACIS_HOME", str(tmp_path / "home"))
+    from acis.api import app as api_app
+    from acis.appsdata import apps
+
+    monkeypatch.setattr(apps, "is_available", lambda: False)
+    engine = AcisEngine.from_config(freeze_config(DEFAULT_CONFIG), encoder=HashingEncoder(dim=256))
+    assert api_app.preload_p0(engine) is None
+    assert TestClient(api_app.create_app(engine)).get("/readyz").json()["p0_corpus"] is False
