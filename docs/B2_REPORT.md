@@ -58,7 +58,9 @@ owner's:
 
 ## What is not measured yet
 
-* Per-relation precision/recall (the spec lists it next to pairwise F1). The benchmark records pairwise figures only.
+* Per-relation precision/recall (the spec lists it next to pairwise F1): implemented in the benchmark (c4bb43b),
+  not yet run at full size. A 20-query smoke run was exact on every relation it contained. Writing it exposed that
+  S1 labelled a same-key rewrite `modified` in both branches of its condition; it now says `replaced` (db62b23).
 * The update-time target for P1 with the **real** encoder. B1's `[ledger:bench-9153e49050de]` used the stand-in.
   The commit-stream demo showed 1.4–4.7 s from commit to searchable with `gte-modernbert-base` on a loaded host,
   but that is a demo observation, not a ledgered measurement. It waits until the G1 sweep frees the CPU.

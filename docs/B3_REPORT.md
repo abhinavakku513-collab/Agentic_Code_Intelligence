@@ -21,6 +21,7 @@ measured with the real encoder, and the reference host (T-rec) does not exist ye
 | 4e3904b | no prebuilt demo index existed (spec 09 R9) | on a clean machine act 1 embeds the whole corpus first: about 2.6 h on this CPU |
 | 110aa87 | Apps-Evolve's `rename` renamed imported modules and attributes | the demo showed `import heapq_v85`, a revision no refactor produces |
 | 304a91a | ingest let a parsed file's own `SyntaxWarning`s print into our logs | noise from the data in the demo output |
+| 34428c1 | vector-cache keys became file names unchecked, and a demo pack supplies its own keys | a crafted pack could write files outside the cache; keys must now be SHA-256 hex, in the cache itself |
 
 ## The prebuilt demo index (D17)
 
@@ -30,6 +31,9 @@ in a zip (25 MB for `gte-modernbert-base`, no pickle). `acis demo-index import` 
 honest checksums (1 % recomputed, cosine ≥ 0.9999). It caps member sizes before decompressing, and a second
 import is a no-op. It fills only the vector cache, and a cold official run does not read that cache (c5b122e),
 so the pack can make a demo fast but never a scored number faster.
+
+Residual risk, accepted: the 1 % recompute cannot catch a *handful* of deliberately poisoned vectors. The pack
+affects only demo rankings and is trusted as far as the release that ships it.
 
 **Owner action:** attach `dist/acis-demo-index.zip` to the GitHub Release alongside the JSON. Regenerate it with
 `uv run acis demo-index export` whenever the encoder or the document preparation changes. An outdated pack is
