@@ -24,8 +24,11 @@ On a clean machine, put `acis-demo-index.zip` from the GitHub Release in `dist/`
 (checksums, model fingerprint and a 1 % recompute are verified) instead of embedding the whole corpus, which takes
 hours on a CPU. It is a demo convenience only: the official run is cold and never reads it.
 
-`make demo` ends by serving <http://127.0.0.1:8000/> — the same engine behind a single offline page: free-text
-search, a channel toggle, version pinning and lineage grouping.
+`make demo` ends by serving <http://127.0.0.1:8000/> — the same engine behind a single offline page. Type any
+query: it is embedded by `gte-modernbert-base` and ranked over the 8,765 APPS solutions (the `auto` channel is
+dense + BM25 + the learned ranker; the toggle switches to dense or BM25 alone). Pick `apps-history` in the
+repository list — 400 real APPS solutions across five versions, built by `make demo` — to pin a version (P1) or
+tick *group by lineage* to see each unit once with its best revision and history (Bonus).
 
 ## Reproducing the official evaluation
 
@@ -69,6 +72,7 @@ Every figure below is either a ledger row or a file in `runs/`. Numbers about AC
 | P1 update time | a 1- or 10-unit change searchable in ~2 s p95 where a full rebuild takes ~11 s, against a 30 s target | `[ledger:bench-9153e49050de]` |
 | Encoder bake-off (G-M) | `gte-modernbert-base` (149M params) selected at NDCG@10 71.03 on all 5,000 dev queries; the two alternatives were 14 and 17 pt behind | `[ledger:gate-055152620da6]`, `configs/gates/G-M.yaml` |
 | Determinism | bit-identical vectors across runs; identical top-10 rankings at 8 vs 2 threads; cached ≡ recomputed (cosine 1.0) | `[ledger:bench-d8ed869255a2]` |
+| Mode A (hybrid + learned ranker, as shipped) vs frozen dense | NDCG@10 72.86 vs 71.03 out of fold on all 5,000 dev queries: +1.82 pt, CI [+1.42, +2.24]; plain reciprocal-rank fusion measured worse than dense alone (`configs/gates/G2.yaml`), so BM25 enters only through the ranker | `[ledger:gate-c88e29bfa5ed]`, `[ledger:gate-5ae1789d8614]` |
 
 ## How it is kept honest
 
