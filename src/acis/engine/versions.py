@@ -257,9 +257,9 @@ class VersionedEngineMixin:
         groups = [g.as_dict() for g in grouped]
         for g in groups:
             best = g["best"]
-            data = opened.get(str(best["version"]))
-            if data is not None:
-                best["source"] = data.text_of(str(best["key"]))
+            owner = opened.get(str(best["version"]))
+            if owner is not None:
+                best["source"] = owner.text_of(str(best["key"]))
         return EvolveResponse(
             groups=groups,
             flat_results=tuple(flat_hits) if req.flat else (),
