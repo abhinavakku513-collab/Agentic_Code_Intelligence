@@ -59,6 +59,24 @@ def _git(*args: str) -> str:
         return ""
 
 
+#: The ledger is the evidence a commit produced, not code: appending one row must not mark the next as dirty.
+DIRTY_EXEMPT = ("runs/ledger.jsonl",)
+
+
+def changed_paths(porcelain: str) -> list[str]:
+    """Paths from `git status --porcelain`, robust to the caller having stripped the first line's status column."""
+    paths = []
+    for line in porcelain.splitlines():
+        parts = line.strip().split(maxsplit=1)
+        if len(parts) == 2:
+            paths.append(parts[1].strip())
+    return paths
+
+
+def tree_is_dirty(porcelain: str) -> bool:
+    return any(path not in DIRTY_EXEMPT for path in changed_paths(porcelain))
+
+
 def environment() -> dict[str, Any]:
     """The part of a row that describes *where* a number came from."""
     from importlib.metadata import PackageNotFoundError, version  # noqa: PLC0415
@@ -71,7 +89,7 @@ def environment() -> dict[str, Any]:
             versions[pkg] = "absent"
     return {
         "git_sha": _git("rev-parse", "HEAD") or "unknown",
-        "dirty": bool(_git("status", "--porcelain")),
+        "dirty": tree_is_dirty(_git("status", "--porcelain")),
         "versions": versions,
         "hostname_hash": short(hash_obj(platform.node()), 12),
         "thread_env": {k: os.environ.get(k, "") for k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS")},

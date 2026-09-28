@@ -137,7 +137,7 @@ def assert_official_environment(config: FrozenConfig, *, ledgered: bool = True, 
 #: run that wrote its own first row would otherwise find the tree dirty and refuse to write its second, which is
 #: exactly what an A+B release candidate does. The rule is about the *code* being rebuildable from `git_sha`, and
 #: the ledger is evidence, not code.
-DIRTY_EXEMPT = ("runs/ledger.jsonl",)
+DIRTY_EXEMPT = ledger.DIRTY_EXEMPT
 
 
 def _working_tree_is_dirty() -> bool:
@@ -153,10 +153,7 @@ def _working_tree_is_dirty() -> bool:
         return True  # fail closed: a precondition about rebuildability may not pass because git did not answer
     if out.returncode != 0:
         return True
-    changed = [
-        line[3:].strip() for line in out.stdout.splitlines() if line.strip() and line[3:].strip() not in DIRTY_EXEMPT
-    ]
-    return bool(changed)
+    return ledger.tree_is_dirty(out.stdout)
 
 
 # -- one mode ----------------------------------------------------------------------------------------------------
