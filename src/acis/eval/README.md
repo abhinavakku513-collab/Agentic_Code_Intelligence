@@ -24,5 +24,6 @@ verification, and the single sanctioned reader of the held-out labels.
 | E-13 | The G-M measurement pass runs the shipping path (factory → engine → metrics), measures cost with the vector cache off so "cold" means cold, and refuses to write a decision from anything but the full decision set | `tests/integration/test_bakeoff_pass.py` |
 
 | E-15 | Apps-Evolve generates a version history with ground truth by construction: deterministic for a seed, every recorded relation matches what the text did, and a lineage survives renames | `tests/unit/test_appsevolve.py` |
+| E-16 | The Phase 3 export holds dev-split data only (ids checked before a byte is written, no held-out text anywhere), drops decontaminated and duplicate queries everywhere their documents included, mines negatives only from positives of dev queries with the false-negative filter, labels each with its fold, declares one training configuration, and hashes every file | `tests/unit/test_adapt_export.py` |
 
 **Non-goals.** No ranking logic (that is `acis.engine`); no mteb types cross into the engine (INV-11).

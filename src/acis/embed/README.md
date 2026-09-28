@@ -25,6 +25,7 @@ a model-free stand-in encoder that exists to validate the harness.
 | M-13 | `encode` takes the route: a query's instruction is chosen per route (INV-15), and V2 is the normalised mean of V0 and V1 with no second encode when the query has no structure | `tests/unit/test_dense_wiring.py` |
 | M-16 | Each side of the vector-cache key moves only with its own prep: a query-side change never invalidates document vectors, nor the reverse | `tests/unit/test_dense_wiring.py` |
 | M-17 | The prebuilt demo index (D17) is labelled, checksummed and recomputable: import refuses an altered pack, another model's pack, and a pack whose vectors fail a recompute (cosine ≥ 0.9999); it fills only the vector cache, which a cold official run never reads; no pickle | `tests/unit/test_demo_index.py`, `tests/integration/test_official_dry_run.py` |
+| M-18 | The Phase 3 import refuses outputs that do not match `TRAIN_MANIFEST.json`, scores every dev query out of fold against the unadapted base on the same GPU, merges θ_base + α·Δ on the CPU, and stops unless each merged model reproduces the GPU's parity sample at cosine ≥ 0.999; it decides nothing | `tests/integration/test_train_lora_smoke.py` |
 
 **Phase boundary.** The runtime is built against an injected `Backend`, so loading, pooling, batching, caching,
 normalisation and ordering are all tested without weights — when real weights arrive the only untested thing is

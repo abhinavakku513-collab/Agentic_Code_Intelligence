@@ -404,6 +404,73 @@ def cmd_demo_index(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_train(args: argparse.Namespace) -> int:
+    """Phase 3 GPU hand-off (docs/GPU_HANDOFF.md). Export writes a dev-only bundle; import is `acis.embed.adapt`."""
+    if args.action == "import":
+        from acis.appsdata import apps
+        from acis.core.config import load_frozen_config
+        from acis.embed.adapt_import import import_training
+        from acis.embed.factory import model_dir
+
+        config = load_frozen_config(args.config)
+        corpus = json.loads("[" + ",".join((Path(args.bundle) / "corpus.jsonl").read_text().splitlines()) + "]")
+        report = import_training(
+            args.path,
+            base_dir=model_dir(str(config.get("model.encoder"))),
+            qrels=apps.load_qrels(),
+            texts={row["doc_id"]: row["text"] for row in corpus},
+            report_path="runs/g3/import_report.json",
+        )
+        print(json.dumps(report, indent=2, sort_keys=True, default=str))
+        return 0
+
+    from acis.appsdata import apps
+    from acis.core.config import load_frozen_config
+    from acis.embed.demo_index import prepared_documents
+    from acis.embed.factory import build_encoder
+    from acis.engine import AcisEngine
+    from acis.engine.core import query_encoder_text
+    from acis.eval import guard, splits
+    from acis.eval.adapt_export import build_bundle
+    from acis.eval.decontam import holdout_reference_texts
+
+    if not apps.is_available():
+        raise NotReady("the APPS dataset is not fetched; run `make fetch` first")
+    problems = splits.verify_lock()
+    if problems:
+        raise InvalidInput("the split lock does not verify; refusing to export training data", problems=problems)
+    config = load_frozen_config(args.config)
+    encoder = build_encoder(config)
+    if not getattr(encoder, "submission_capable", False):
+        raise InvalidInput("the export mines negatives with the real encoder; the configured one is the stand-in")
+    engine = AcisEngine.from_config(config, encoder=encoder)
+
+    queries = dict(apps.load_queries())
+    guard.assert_dev_pool(queries, context="train export")
+    guard.assert_no_holdout_ids(queries, context="train export")
+    qrels = apps.load_qrels()
+    positive = {q: next(iter(qrels[q])) for q in queries}
+    folds = {q: f for f, ids in splits.fold_members().items() for q in ids}
+    docs = {str(s.handle): s.text for s in apps.load_corpus()}
+
+    summary = build_bundle(
+        args.path,
+        queries=queries,
+        positive=positive,
+        docs=docs,
+        folds=folds,
+        holdout_texts=holdout_reference_texts(),
+        encoder=encoder,
+        dev_ids=apps.dev_query_ids(),
+        prepare_query=lambda t: query_encoder_text(config, engine.normalise_query(t)[0]),
+        prepare_doc=lambda t: prepared_documents(config, [t])[0],
+        mine_top=args.mine_top,
+        meta={"split_lock_hash": splits.split_lock_hash(), "config": args.config, "dataset": "CoIR-Retrieval/apps"},
+    )
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     """Run the HTTP API and the demo UI over the same engine every other surface uses."""
     from acis.api.app import serve

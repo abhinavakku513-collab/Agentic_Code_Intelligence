@@ -130,6 +130,22 @@ DEFAULT_CONFIG: dict[str, object] = {
 }
 
 
+def query_encoder_text(config: Any, normalised_query: str) -> str:
+    """The exact text the dense channel encodes for an already-normalised query: its view, then head+tail.
+
+    One definition, used by the engine and by anything that must match it — the training export in particular,
+    where a query prepared differently from serving is a train/serve skew nobody would see in the numbers.
+    """
+    prep = config.section("prep").get("query", {})
+    view = build_view(normalised_query, str(prep.get("view", "V0")))
+    return head_tail(
+        view,
+        max_tokens=int(prep.get("max_tokens", 1024)),
+        head=int(prep.get("head", 768)),
+        tail=int(prep.get("tail", 256)),
+    ).text
+
+
 class AcisEngine(VersionedEngineMixin):
     """The engine. Construct with `AcisEngine.from_config(...)`; everything else is a method on the frozen surface."""
 
@@ -369,14 +385,7 @@ class AcisEngine(VersionedEngineMixin):
 
     def _query_vector(self, snapshot_id: str, query: str, *, route: str = "generic") -> np.ndarray:
         assert self.encoder is not None
-        prep = self.config.section("prep").get("query", {})
-        view = build_view(query, str(prep.get("view", "V0")))
-        prepared = head_tail(
-            view,
-            max_tokens=int(prep.get("max_tokens", 1024)),
-            head=int(prep.get("head", 768)),
-            tail=int(prep.get("tail", 256)),
-        ).text
+        prepared = query_encoder_text(self.config, query)
         # INV-2: the cache key carries the snapshot and the config, so a vector can never cross either boundary.
         key = hash_obj(
             {
@@ -823,4 +832,4 @@ class AcisEngine(VersionedEngineMixin):
         return self.search(SearchRequest(query=query, repo_id=repo_id, version=version, **kw))  # type: ignore[arg-type]
 
 
-__all__ = ["DEFAULT_CONFIG", "MAX_QUERY_CHARS", "MAX_TOP_K", "AcisEngine", "SnapshotData"]
+__all__ = ["DEFAULT_CONFIG", "MAX_QUERY_CHARS", "MAX_TOP_K", "AcisEngine", "SnapshotData", "query_encoder_text"]

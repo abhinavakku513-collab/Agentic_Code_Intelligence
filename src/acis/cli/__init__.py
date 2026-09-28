@@ -12,9 +12,7 @@ from collections.abc import Sequence
 
 from acis.core.errors import AcisError
 
-NOT_YET = {
-    "train": "Phase 3",
-}
+NOT_YET: dict[str, str] = {}
 
 
 def _add_eval(sub: argparse._SubParsersAction) -> None:
@@ -179,6 +177,15 @@ def build_parser() -> argparse.ArgumentParser:
     demo_idx.add_argument("path", nargs="?", default="dist/acis-demo-index.zip")
     demo_idx.add_argument("--config", default="configs/dev.yaml")
     demo_idx.add_argument("--verify-fraction", type=float, default=0.01, help="share recomputed on import")
+
+    train = sub.add_parser("train", help="Phase 3 GPU hand-off: export the training bundle, or import its results")
+    train.add_argument("action", choices=["export", "import"])
+    train.add_argument(
+        "path", nargs="?", default="dist/train-bundle", help="bundle dir (export) or output dir (import)"
+    )
+    train.add_argument("--config", default="configs/dev.yaml")
+    train.add_argument("--mine-top", type=int, default=50)
+    train.add_argument("--bundle", default="dist/train-bundle", help="import: the bundle the run was trained from")
 
     report = sub.add_parser("report", help="ledger-backed evidence table")
     report.add_argument("--claims", action="store_true")

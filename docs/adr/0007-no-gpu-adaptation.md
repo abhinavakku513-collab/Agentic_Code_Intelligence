@@ -1,6 +1,6 @@
 # ADR-0007 — Phase 3 adaptation is not shipped: no GPU, and the frozen base stands
 
-Status: **accepted 2026-09-23** (the spec's own contingency: "No GPU ⇒ decision recorded, frozen base stays",
+Status: **superseded by ADR-0008 (2026-09-28)** — accepted 2026-09-23 (the spec's own contingency: "No GPU ⇒ decision recorded, frozen base stays",
 `docs/spec/07` Phase 3).
 
 ## Context
