@@ -47,10 +47,22 @@ from acis.rank.compose import rank_derived_scores
 OUT_DIR = "runs/ltr"
 
 
-def build_groups(engine: AcisEngine, snapshot: Any, query_ids: list[str], *, dense_k: int, lexical_k: int, cap: int):
-    """One training group per query: the candidate union, its features, and the label from the dev qrels."""
+def build_groups(
+    engine: AcisEngine,
+    snapshot: Any,
+    query_ids: list[str],
+    *,
+    dense_k: int,
+    lexical_k: int,
+    cap: int,
+    texts: dict[str, str] | None = None,
+):
+    """One training group per query: the candidate union, its features, and the label from the dev qrels.
+
+    `texts` overrides a query's text (G-OOD perturbations); its label stays the dev label of the original.
+    """
     data = engine.snapshot_data(snapshot)
-    queries = apps.load_queries()
+    queries = {**apps.load_queries(), **(texts or {})}
     qrels = dev_qrels(query_ids)
 
     groups: list[ltr.TrainingGroup] = []
