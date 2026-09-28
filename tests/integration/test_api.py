@@ -178,3 +178,11 @@ def test_without_the_dataset_the_service_still_starts_and_says_so(tmp_path, monk
     engine = AcisEngine.from_config(freeze_config(DEFAULT_CONFIG), encoder=HashingEncoder(dim=256))
     assert api_app.preload_p0(engine) is None
     assert TestClient(api_app.create_app(engine)).get("/readyz").json()["p0_corpus"] is False
+
+
+def test_the_channel_the_user_picks_is_the_channel_that_ranks(client):
+    """The page's channel toggle was ignored: every request ranked with the configured channel."""
+    query = {"query": "binary search lo hi", "repo_id": "-", "top_k": 3}
+    lexical = client.post("/v1/search", json={**query, "mode": "lexical"}).json()["results"]
+    dense = client.post("/v1/search", json={**query, "mode": "dense"}).json()["results"]
+    assert [h["score"] for h in lexical] != [h["score"] for h in dense]

@@ -415,6 +415,11 @@ class AcisEngine(VersionedEngineMixin):
 
     def _query_vector(self, snapshot_id: str, query: str, *, route: str = "generic") -> np.ndarray:
         assert self.encoder is not None
+        # The route changes a vector only through the instruction it selects. For an encoder whose input is the
+        # same on every route, encoding under the pipeline's route would miss the vector routing just computed
+        # for the same text — a second full forward pass on every fresh interactive query.
+        if not getattr(self.encoder, "route_sensitive", True):
+            route = "generic"
         texts = query_encoder_texts(self.config, query)
         prepared = "\x00".join(texts)  # the cache key must distinguish a V2 pair from either of its texts
         # INV-2: the cache key carries the snapshot and the config, so a vector can never cross either boundary.
@@ -670,11 +675,13 @@ class AcisEngine(VersionedEngineMixin):
         strict: bool,
         counters: Counters | None = None,
         route: str | None = None,
+        channel: str = "auto",
     ) -> list[tuple[str, float]]:
         query, _truncated = self.normalise_query(text)
         # The route chooses the instruction the query is encoded with (spec 02 §4, stage 2). `search` has already
         # computed it; the batch surface has not, and routing is a pure function of the query, so it is safe here.
-        mode = str(self.config.get("run.channel", "auto"))
+        # A request that names a channel gets that channel; "auto" means the configured one.
+        mode = channel if channel != "auto" else str(self.config.get("run.channel", "auto"))
         if route is None:
             # On the hybrid channel the route picks the ranker or the generic path, so it always matters there.
             route = self.route(query) if mode == "hybrid" else self.encoding_route(query)
@@ -749,7 +756,9 @@ class AcisEngine(VersionedEngineMixin):
         # Per-request counters: `SearchResponse.degradations` must describe *this* request, not everything the
         # process has degraded since start-up. They are merged into the engine's totals for the run manifest.
         request_counters = Counters()
-        ranked = self._rank_one(data, req.query, top_k=top_k, strict=strict, counters=request_counters, route=route)
+        ranked = self._rank_one(
+            data, req.query, top_k=top_k, strict=strict, counters=request_counters, route=route, channel=str(req.mode)
+        )
         for name, count in request_counters.snapshot().items():
             self.counters.incr(name, count)
         for event in request_counters.degradations():

@@ -443,3 +443,29 @@ def test_mode_b_and_mode_a_produce_the_same_v2_vector(tmp_path):
     snap = engine.build_snapshot(DOCS, source="ab")
     mode_a = engine._query_vector(snap.snapshot_id, engine.normalise_query(STRUCTURED)[0])  # noqa: SLF001
     np.testing.assert_allclose(mode_b, mode_a, atol=1e-6)
+
+
+def test_an_interactive_search_encodes_a_fresh_query_once():
+    """Routing embeds the query, then the dense channel embeds the same text under the pipeline's route: for an
+    encoder whose input does not depend on the route, the second pass was pure latency on every fresh query."""
+    from acis.engine.routing import QueryBank
+
+    encoder = InsensitiveEncoder()
+    engine = AcisEngine.from_config(freeze_config(DEFAULT_CONFIG), encoder=encoder)
+    engine._bank = QueryBank.from_vectors(np.eye(encoder.dim, dtype=np.float32), k=2)
+    engine.build_snapshot(DOCS, source="interactive")
+    cached, forward = {}, []
+
+    def encode(texts, *, is_query=False, batch_size=64, route="generic"):
+        out = []
+        for t in texts:
+            if (t, route) not in cached:
+                forward.append((is_query, route, t))
+                cached[(t, route)] = RecordingEncoder.encode(encoder, [t], is_query=is_query, route=route)[0]
+            out.append(cached[(t, route)])
+        return np.stack(out)
+
+    encoder.encode = encode
+    encoder.calls.clear()
+    engine.search(SearchRequest(query="sort a list of integers", top_k=3))
+    assert sum(1 for c in forward if c[0]) == 1, forward
