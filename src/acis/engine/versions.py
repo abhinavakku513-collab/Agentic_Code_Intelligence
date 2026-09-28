@@ -223,8 +223,10 @@ class VersionedEngineMixin:
         per_version = max(req.top_k, 10)
         hits: list[RevisionHit] = []
         flat: list[Any] = []
+        opened: dict[str, Any] = {}
         for label, snapshot_id in zip(resolution.labels, resolution.snapshot_ids, strict=True):
             data = self.open_version(req.repo_id, f"snapshot:{snapshot_id}")
+            opened[label] = data
             ranked = self._rank_one(data, req.query, top_k=per_version, strict=False)  # type: ignore[attr-defined]
             for rank, (doc_id, score) in enumerate(ranked, start=1):
                 hits.append(
@@ -250,8 +252,16 @@ class VersionedEngineMixin:
             )
             for position, (label, doc_id, score, _rank, data) in enumerate(flat[: req.top_k], start=1)
         ]
+        # Each group shows the code of its best revision, re-read from that version's store by hash (INV-1):
+        # a lineage answer without its code is an answer nobody can check.
+        groups = [g.as_dict() for g in grouped]
+        for g in groups:
+            best = g["best"]
+            data = opened.get(str(best["version"]))
+            if data is not None:
+                best["source"] = data.text_of(str(best["key"]))
         return EvolveResponse(
-            groups=[g.as_dict() for g in grouped],
+            groups=groups,
             flat_results=tuple(flat_hits) if req.flat else (),
             degradations=(
                 f"flat_duplicate_rate={duplicate_rate(hits, index):.3f}",

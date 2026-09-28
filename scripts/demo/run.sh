@@ -34,8 +34,13 @@ $PY acis search "$QUERY" --top-k 5 || {
 bold "2 · P1 · a corpus changing under a live index"
 $PY python scripts/demo/commit_stream.py --versions "$VERSIONS" --speed "$SPEED" --query "$QUERY" --kill
 
-bold "3 · the UI"
+bold "3 · a real versioned repository for the page (P1 + Bonus)"
+# Real APPS solutions across five versions, embedded with the configured encoder. Built once; later runs reuse it.
+$PY python scripts/demo/build_history.py
+
+bold "4 · the UI"
 echo "  starting the API and the demo page on http://127.0.0.1:${PORT}/"
 echo "  the same engine, driven by hand: free text, channel toggle, version pinning, lineage grouping."
+echo "  pick 'apps-history' in the repository list for P1 (pin a version) and the Bonus (group by lineage)."
 echo "  Ctrl-C to stop."
 exec $PY acis serve --port "$PORT"

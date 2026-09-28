@@ -112,6 +112,7 @@ function renderGroups(groups) {
           <span class="hash">${escapeHtml(g.lineage_id)}</span>
         </div>
         <div class="timeline">${steps}</div>
+        ${g.best.source ? `<pre><code>${highlight(g.best.source)}</code></pre>` : ""}
       </details>`;
   }).join("");
 }
