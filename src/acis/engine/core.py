@@ -554,13 +554,16 @@ class AcisEngine(VersionedEngineMixin):
             # a fallback from something better. Calling it one would make strict mode refuse a correct ranking
             # and would put a fallback in the submission manifest that never happened.
             counters.incr(f"route.{route}.ltr_skipped")
-            head = [c.doc_id for c in pool if c.dense_rank] or [c.doc_id for c in pool]
+            head = []  # the frozen dense order, exactly
         elif ranker is not None:
             head, abstained = ranker.rerank(doc_ids, matrix)
-            counters.incr("ltr.applied" if not abstained else "ltr.considered")
             if abstained:
-                degradation("ltr_abstained", "not enough feature groups fired", strict=False, counters=counters)
-                head = self._rrf_order(pool)
+                # Thin evidence: the ranker's contract is "the dense order stands". Not reciprocal-rank fusion (G2
+                # measured it harmful here), and not a fallback: abstaining is the designed behaviour, counted.
+                counters.incr("ltr.abstained")
+                head = []
+            else:
+                counters.incr("ltr.applied")
         else:
             degradation("ltr_unavailable", "reciprocal-rank fusion", strict=strict, counters=counters)
             head = self._rrf_order(pool)

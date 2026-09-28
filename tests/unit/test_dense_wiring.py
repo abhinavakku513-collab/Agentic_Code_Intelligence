@@ -469,3 +469,24 @@ def test_an_interactive_search_encodes_a_fresh_query_once():
     encoder.calls.clear()
     engine.search(SearchRequest(query="sort a list of integers", top_k=3))
     assert sum(1 for c in forward if c[0]) == 1, forward
+
+
+def test_an_abstaining_ranker_hands_back_the_dense_order_and_is_not_a_fallback(monkeypatch):
+    """Abstention is the designed behaviour on thin evidence. It fell back to reciprocal-rank fusion — which the
+    gates measured as harmful (G2: -8.93 pt) — and was recorded as a degradation, so one abstaining held-out query
+    would have failed verify-submission (fallbacks == 0) on the official Mode A run."""
+    cfg = freeze_config({**DEFAULT_CONFIG, "run": {**DEFAULT_CONFIG["run"], "channel": "hybrid", "strict": True}})
+    engine = AcisEngine.from_config(cfg, encoder=HashingEncoder(dim=64))
+    snap = engine.build_snapshot(DOCS, source="abstain")
+
+    class Abstains:
+        def rerank(self, doc_ids, features):
+            return list(doc_ids), True
+
+    monkeypatch.setattr(type(engine), "ranker", property(lambda self: Abstains()))
+    monkeypatch.setattr(engine, "route", lambda q, **kw: "statement_like")
+    data = engine.snapshot_data(snap)
+    dense = [d for d, _ in engine._dense_ranking(data, "solve 3", k=len(DOCS))]  # noqa: SLF001
+    response = engine.search(SearchRequest(query="solve 3", top_k=len(DOCS)))
+    assert [h.unit.key for h in response.results] == dense
+    assert not response.degradations

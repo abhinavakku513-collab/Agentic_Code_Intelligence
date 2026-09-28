@@ -56,11 +56,14 @@ def build_groups(engine: AcisEngine, snapshot: Any, query_ids: list[str], *, den
     groups: list[ltr.TrainingGroup] = []
     dense_runs: dict[str, dict[str, float]] = {}
     fusion_runs: dict[str, dict[str, float]] = {}
+    routes: dict[str, str] = {}
 
     for position, qid in enumerate(query_ids):
         text = queries[qid]
         normalised, _ = engine.normalise_query(text)
-        dense = engine._dense_ranking(data, normalised, route=engine.route(normalised), k=max(dense_k, 100))
+        route = engine.route(normalised)
+        routes[qid] = route
+        dense = engine._dense_ranking(data, normalised, route=route, k=max(dense_k, 100))
         lexical = engine._lexical_ranking(data, normalised, lexical_k)
         pool = cand.union(dense, lexical, dense_k=dense_k, lexical_k=lexical_k, cap=cap)
 
@@ -84,7 +87,36 @@ def build_groups(engine: AcisEngine, snapshot: Any, query_ids: list[str], *, den
         if position and position % 250 == 0:
             print(f"  … {position}/{len(query_ids)} queries", flush=True)
 
-    return groups, dense_runs, fusion_runs
+    return groups, dense_runs, fusion_runs, routes
+
+
+def shipped_run(
+    oof: dict[str, list[tuple[str, float]]],
+    groups: list[ltr.TrainingGroup],
+    dense_runs: dict[str, dict[str, float]],
+    routes: dict[str, str],
+    *,
+    rho: float = ltr.DEFAULT_RHO,
+) -> tuple[dict[str, dict[str, float]], dict[str, int]]:
+    """Out of fold, exactly as Mode A serves: the ranker's order only for a statement-like query whose evidence
+    fired; the frozen dense order for every query routed off the ranker or on which it abstains."""
+    oof_orders = oof_run(oof)
+    run: dict[str, dict[str, float]] = {}
+    counts = {"ranker": 0, "routed_off": 0, "abstained": 0}
+    for group in groups:
+        qid = group.query_id
+        availability = ltr.group_availability(group.features)
+        fired = sum(1 for value in availability.values() if value > 0.0) / max(1, len(ltr.GROUPS))
+        if routes.get(qid) != "statement_like":
+            counts["routed_off"] += 1
+            run[qid] = dense_runs[qid]
+        elif fired < rho:
+            counts["abstained"] += 1
+            run[qid] = dense_runs[qid]
+        else:
+            counts["ranker"] += 1
+            run[qid] = oof_orders[qid]
+    return run, counts
 
 
 def oof_run(oof: dict[str, list[tuple[str, float]]], *, top_k: int = 100) -> dict[str, dict[str, float]]:
@@ -150,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     qrels = dev_qrels(ids)
 
     started = time.perf_counter()
-    groups, dense_runs, fusion_runs = build_groups(
+    groups, dense_runs, fusion_runs, routes = build_groups(
         engine, snapshot, ids, dense_k=args.dense_k, lexical_k=args.lexical_k, cap=args.cap
     )
     print(f"  {len(groups)} groups in {time.perf_counter() - started:.0f}s", flush=True)
@@ -171,6 +203,9 @@ def main(argv: list[str] | None = None) -> int:
             compare("LTR (out of fold)", oof_run(oof), dense_runs, qrels),
         ],
     }
+    shipped, shipped_counts = shipped_run(oof, groups, dense_runs, routes)
+    report["rows"].append(compare("Mode A as shipped (routed, abstaining; out of fold)", shipped, dense_runs, qrels))
+    report["shipped_counts"] = shipped_counts
 
     out = acis_root() / OUT_DIR
     out.mkdir(parents=True, exist_ok=True)
