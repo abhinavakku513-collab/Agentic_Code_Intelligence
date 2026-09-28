@@ -149,46 +149,49 @@ class _EncoderSurface(AbsEncoder):
         for batch in inputs:
             texts.extend(list(batch["text"]))
         is_query = prompt_type == PromptType.query
-        prepared = [self._prepare_query(t) if is_query else self._prepare_document(t) for t in texts]
         encoder = self.engine.encoder
         assert encoder is not None
         batch_size = int(kw.get("batch_size", 64))
         if not is_query:
+            prepared = [self._prepare_document(t) for t in texts]
             return np.asarray(encoder.encode(prepared, is_query=False, batch_size=batch_size), dtype=np.float32)
+        # One query may be two texts (view V2); each row's vector is pooled exactly as Mode A pools it.
+        query_texts = [self._prepare_query_texts(t) for t in texts]
 
         # Queries are encoded per route, because the route chooses the instruction (INV-15). Grouping keeps the
         # work batched; rows are written back to their input positions, so batching stays unobservable (INV-3).
         # The route is taken from the *normalised* query, exactly as Mode A takes it, and only computed when it can
         # change the vector (`AcisEngine.encoding_route`): Mode B has no ranker for it to choose.
-        out = np.zeros((len(prepared), encoder.dim), dtype=np.float32)
+        out = np.zeros((len(query_texts), encoder.dim), dtype=np.float32)
         groups: dict[str, list[int]] = {}
         for i, raw in enumerate(texts):
             normalised, _ = self.engine.normalise_query(raw)
             groups.setdefault(self.engine.encoding_route(normalised), []).append(i)
+        from acis.engine.core import pooled_query_vector  # noqa: PLC0415
+
         for route, rows in groups.items():
-            vectors = encoder.encode([prepared[i] for i in rows], is_query=True, batch_size=batch_size, route=route)
-            out[rows] = np.asarray(vectors, dtype=np.float32)
+            flat = [t for i in rows for t in query_texts[i]]
+            vectors = np.asarray(
+                encoder.encode(flat, is_query=True, batch_size=batch_size, route=route), dtype=np.float32
+            )
+            offset = 0
+            for i in rows:
+                n = len(query_texts[i])
+                out[i] = pooled_query_vector(vectors[offset : offset + n])
+                offset += n
         return out
 
-    def _prepare_query(self, text: str) -> str:
-        """Exactly the preparation Mode A applies, including the engine's own input rules.
+    def _prepare_query_texts(self, text: str) -> tuple[str, ...]:
+        """Exactly the preparation Mode A applies (`query_encoder_texts`), including the engine's input rules.
 
         Going straight to `build_view` here would skip `q1` normalisation and the over-long-query rule that
         `AcisEngine.normalise_query` enforces, so Mode A and Mode B would encode subtly different text and the
         A-vs-B comparison (gate G-AB) would be measuring the preprocessing rather than the pipeline.
         """
-        from acis.prep.truncate import head_tail  # noqa: PLC0415
-        from acis.prep.views import build_view  # noqa: PLC0415
+        from acis.engine.core import query_encoder_texts  # noqa: PLC0415
 
         normalised, _truncated = self.engine.normalise_query(text)
-        prep = self.cfg.section("prep").get("query", {})
-        view = build_view(normalised, str(prep.get("view", "V0")))
-        return head_tail(
-            view,
-            max_tokens=int(prep.get("max_tokens", 1024)),
-            head=int(prep.get("head", 768)),
-            tail=int(prep.get("tail", 256)),
-        ).text
+        return query_encoder_texts(self.cfg, normalised)
 
     def _prepare_document(self, text: str) -> str:
         from acis.prep.normalize import d1  # noqa: PLC0415

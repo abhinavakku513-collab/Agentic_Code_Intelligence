@@ -377,3 +377,69 @@ def replace_card(card, **fields):
 
 def test_the_stand_in_declares_itself_route_insensitive():
     assert HashingEncoder(dim=16).route_sensitive is False
+
+
+# -- V2 is real on both surfaces (it silently ran V0: build_view had no V2 branch) --------------------------------
+STRUCTURED = "Solve it quickly.\n-----Input-----\nThe first line holds n.\n-----Output-----\nPrint the answer.\n"
+
+
+def _engine(view, encoder):
+    cfg = freeze_config(
+        {
+            **DEFAULT_CONFIG,
+            "run": {**DEFAULT_CONFIG["run"], "channel": "dense"},
+            "prep": {**DEFAULT_CONFIG["prep"], "query": {**DEFAULT_CONFIG["prep"]["query"], "view": view}},
+        }
+    )
+    engine = AcisEngine.from_config(cfg, encoder=encoder)
+    return engine, engine.build_snapshot(DOCS, source=f"view-{view}")
+
+
+def test_v2_encodes_both_views_and_ranks_by_their_normalised_mean():
+    from acis.engine.core import query_encoder_texts
+
+    engine, snap = _engine("V2", HashingEncoder(dim=64))
+    texts = query_encoder_texts(engine.config, engine.normalise_query(STRUCTURED)[0])
+    assert len(texts) == 2 and texts[0] != texts[1]
+    both = engine.encoder.encode(list(texts), is_query=True)
+    expected = (both[0] + both[1]) / np.linalg.norm(both[0] + both[1])
+    got = engine._query_vector(snap.snapshot_id, engine.normalise_query(STRUCTURED)[0])  # noqa: SLF001
+    np.testing.assert_allclose(got, expected, atol=1e-6)
+
+
+def test_v2_on_a_query_without_structure_is_one_encode():
+    from acis.engine.core import query_encoder_texts
+
+    engine, _ = _engine("V2", HashingEncoder(dim=64))
+    assert len(query_encoder_texts(engine.config, "what is a heap")) == 1
+
+
+def test_an_unknown_view_in_the_configuration_is_refused_not_run_as_v0():
+    from acis.engine.core import query_encoder_texts
+
+    engine, _ = _engine("V9", HashingEncoder(dim=64))
+    with pytest.raises(ValueError, match="view"):
+        query_encoder_texts(engine.config, "anything")
+
+
+def test_mode_b_and_mode_a_produce_the_same_v2_vector(tmp_path):
+    """G-AB compares surfaces, not preprocessing: a V2 query must be the same vector through both."""
+    import yaml
+
+    from acis.mteb_adapter import PrePostPipelineEncoder
+
+    config = yaml.safe_load(Path("configs/dev.yaml").read_text(encoding="utf-8"))
+    config["model"] = {**config["model"], "encoder": "hashing", "dim": 64}
+    config["prep"]["query"]["view"] = "V2"
+    config["run"]["channel"] = "dense"
+    path = tmp_path / "v2.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    model = PrePostPipelineEncoder(config_path=str(path))
+    from mteb.types import PromptType
+
+    mode_b = model.encode([{"text": [STRUCTURED]}], prompt_type=PromptType.query)[0]
+    engine = model.engine
+    snap = engine.build_snapshot(DOCS, source="ab")
+    mode_a = engine._query_vector(snap.snapshot_id, engine.normalise_query(STRUCTURED)[0])  # noqa: SLF001
+    np.testing.assert_allclose(mode_b, mode_a, atol=1e-6)

@@ -130,20 +130,50 @@ DEFAULT_CONFIG: dict[str, object] = {
 }
 
 
-def query_encoder_text(config: Any, normalised_query: str) -> str:
-    """The exact text the dense channel encodes for an already-normalised query: its view, then head+tail.
+def query_encoder_texts(config: Any, normalised_query: str) -> tuple[str, ...]:
+    """The exact text(s) the dense channel encodes for an already-normalised query.
 
-    One definition, used by the engine and by anything that must match it — the training export in particular,
-    where a query prepared differently from serving is a train/serve skew nobody would see in the numbers.
+    V0 and V1 are one text each: the view, then head+tail. V2 is two — V0's and V1's — whose vectors are averaged
+    and renormalised; a query with no structure renders V1 as V0, so it is one text and one encode. An unknown view
+    is an error: it used to fall back to V0, which made a V2 configuration silently run V0.
+
+    One definition, used by the engine, by Mode B and by the training export — where a query prepared differently
+    from serving is a train/serve skew nobody would see in the numbers.
     """
     prep = config.section("prep").get("query", {})
-    view = build_view(normalised_query, str(prep.get("view", "V0")))
-    return head_tail(
-        view,
-        max_tokens=int(prep.get("max_tokens", 1024)),
-        head=int(prep.get("head", 768)),
-        tail=int(prep.get("tail", 256)),
-    ).text
+    view = str(prep.get("view", "V0"))
+    if view not in ("V0", "V1", "V2"):
+        raise ValueError(f"unknown query view {view!r}; known: V0, V1, V2")
+
+    def render(v: str) -> str:
+        return head_tail(
+            build_view(normalised_query, v),
+            max_tokens=int(prep.get("max_tokens", 1024)),
+            head=int(prep.get("head", 768)),
+            tail=int(prep.get("tail", 256)),
+        ).text
+
+    if view != "V2":
+        return (render(view),)
+    v0, v1 = render("V0"), render("V1")
+    return (v0,) if v1 == v0 else (v0, v1)
+
+
+def query_encoder_text(config: Any, normalised_query: str) -> str:
+    """The single text for a one-text view. V2 has two; callers that need one text refuse it."""
+    texts = query_encoder_texts(config, normalised_query)
+    if len(texts) != 1:
+        raise ValueError("this caller needs a single query text; view V2 encodes two")
+    return texts[0]
+
+
+def pooled_query_vector(vectors: np.ndarray) -> np.ndarray:
+    """One text → its vector; two (V2) → their normalised mean."""
+    if vectors.shape[0] == 1:
+        return np.asarray(vectors[0], dtype=np.float32)
+    total = np.asarray(vectors.sum(axis=0), dtype=np.float32)
+    norm = float(np.linalg.norm(total)) or 1.0
+    return total / norm
 
 
 class AcisEngine(VersionedEngineMixin):
@@ -385,7 +415,8 @@ class AcisEngine(VersionedEngineMixin):
 
     def _query_vector(self, snapshot_id: str, query: str, *, route: str = "generic") -> np.ndarray:
         assert self.encoder is not None
-        prepared = query_encoder_text(self.config, query)
+        texts = query_encoder_texts(self.config, query)
+        prepared = "\x00".join(texts)  # the cache key must distinguish a V2 pair from either of its texts
         # INV-2: the cache key carries the snapshot and the config, so a vector can never cross either boundary.
         key = hash_obj(
             {
@@ -404,8 +435,8 @@ class AcisEngine(VersionedEngineMixin):
             self.counters.incr("cache.qemb.hit")
             return cached
         self.counters.incr("cache.qemb.miss")
-        vector: np.ndarray = np.asarray(
-            self.encoder.encode([prepared], is_query=True, route=route)[0], dtype=np.float32
+        vector = pooled_query_vector(
+            np.asarray(self.encoder.encode(list(texts), is_query=True, route=route), dtype=np.float32)
         )
         self._query_vector_cache[key] = vector
         return vector
@@ -832,4 +863,13 @@ class AcisEngine(VersionedEngineMixin):
         return self.search(SearchRequest(query=query, repo_id=repo_id, version=version, **kw))  # type: ignore[arg-type]
 
 
-__all__ = ["DEFAULT_CONFIG", "MAX_QUERY_CHARS", "MAX_TOP_K", "AcisEngine", "SnapshotData", "query_encoder_text"]
+__all__ = [
+    "DEFAULT_CONFIG",
+    "MAX_QUERY_CHARS",
+    "MAX_TOP_K",
+    "AcisEngine",
+    "SnapshotData",
+    "pooled_query_vector",
+    "query_encoder_text",
+    "query_encoder_texts",
+]
