@@ -557,6 +557,7 @@ class AcisEngine(VersionedEngineMixin):
             head = [c.doc_id for c in pool if c.dense_rank] or [c.doc_id for c in pool]
         elif ranker is not None:
             head, abstained = ranker.rerank(doc_ids, matrix)
+            counters.incr("ltr.applied" if not abstained else "ltr.considered")
             if abstained:
                 degradation("ltr_abstained", "not enough feature groups fired", strict=False, counters=counters)
                 head = self._rrf_order(pool)
