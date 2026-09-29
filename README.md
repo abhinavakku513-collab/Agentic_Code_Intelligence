@@ -1,187 +1,702 @@
-# ACIS — Agentic Code Intelligence
+ACIS — Agentic Code Intelligence
 
-**Natural-language query in, ranked code snippets out, with the exact source as evidence.** Local, offline,
-CPU-only. No generation, no LLM in the scored path, no network at query time.
+Natural-language query in, ranked code snippets out, with the exact source as evidence.
 
-Built for Samsung PRISM GenAI Hackathon Theme 1: P0 (CoIR *AppsRetrieval* via MTEB), P1 (retrieval across code
-versions with fast index rebuild) and the Bonus (retrieval across *all* versions).
+ACIS (Agentic Code Intelligence) is a retrieval system for large codebases. Given a natural-language query and a library of code, it ranks code snippets by relevance so that an agent or developer can reach the relevant implementation faster.
 
----
+Built for Samsung PRISM GenAI Hackathon — Theme 1: Agentic Code Intelligence.
 
-## Quick start
+1. Project Scope
 
-```bash
-make setup                       # uv sync — Python 3.12, hash-locked
-make doctor                      # hardware profile -> runs/hardware.json
-make fetch                       # the APPS dataset assets (the only network step)
-make fetch-models MODELS=gte-modernbert-base   # the shipped encoder (G-M), pinned by commit + file hashes
+The Theme 1 problem is fundamentally code retrieval: given a library of code and a natural-language query, provide a ranking of code snippets in order of relevance.
 
-uv run acis search "find the shortest path in a weighted graph"      # P0: free-text retrieval
-make demo                        # the scripted runbook: P0, then P1 live, then the Bonus, then the UI
-```
+Goal
 
-On a clean machine, put `acis-demo-index.zip` from the GitHub Release in `dist/` first. `make demo` imports it
-(checksums, model fingerprint and a 1 % recompute are verified) instead of embedding the whole corpus, which takes
-hours on a CPU. It is a demo convenience only: the official run is cold and never reads it.
+Scope
 
-`make demo` ends by serving <http://127.0.0.1:8000/> — the same engine behind a single offline page. Type any
-query: it is embedded by `gte-modernbert-base` and ranked over the 8,765 APPS solutions (the `auto` channel is
-dense + BM25 + the learned ranker; the toggle switches to dense or BM25 alone). Pick `apps-history` in the
-repository list — 400 real APPS solutions across five versions, built by `make demo` — to pin a version (P1) or
-tick *group by lineage* to see each unit once with its best revision and history (Bonus).
+P0 — Retrieval Accuracy
 
-## Reproducing the official evaluation
+Retrieve relevant code snippets for a natural-language query.
 
-```bash
-make reproduce                   # cold official run from empty caches -> runs/<run_id>/
+P1 — Retrieval Across Versions
+
+Retrieve from different versions of a changing codebase and rebuild/update indexes efficiently.
+
+Bonus — Evolutionary Retrieval
+
+Retrieve across all versions while handling near-identical code revisions and their lineage.
+
+Out of scope
+
+Generation, explanation by an LLM, or answering the user's question with generated code is not part of the scored retrieval path.
+
+2. System Overview
+
+Natural-language query
+        │
+        ▼
+Query preprocessing / routing
+        │
+        ├──────────────► Dense retrieval
+        │
+        ├──────────────► BM25 / lexical retrieval
+        │
+        └──────────────► Query/code features
+                            │
+                            ▼
+                    Fusion / learned ranking
+                            │
+                            ▼
+                  Ranked code snippets
+                            │
+                            ▼
+                  Exact source evidence
+
+Version-aware retrieval:
+
+Repository
+   │
+   ├── Version v1 ──► indexed units
+   ├── Version v2 ──► changed / reused units
+   ├── Version v3 ──► changed / reused units
+   │
+   └── Lineage ─────► evolution across versions
+
+3. Implemented Scope
+
+P0 — Retrieval Engine
+
+Implemented components include:
+
+Query preprocessing and route selection
+
+Model-specific query formatting
+
+Dense embeddings
+
+Dense similarity retrieval
+
+BM25 / lexical retrieval
+
+Retrieval features
+
+Candidate union
+
+Ranking / fusion
+
+Tail handling
+
+Confidence information
+
+Evaluation and run ledgers
+
+UI/API access to the same retrieval engine
+
+The selected real encoder is:
+
+Alibaba-NLP/gte-modernbert-base
+
+The project records model metadata and pinning information used by the evaluation workflow.
+
+P1 — Retrieval Across Versions
+
+Implemented:
+
+Immutable snapshots
+
+Content-addressed reuse
+
+Version isolation
+
+Incremental updates
+
+Changed/added/deleted/renamed unit detection
+
+Reuse of unchanged embeddings
+
+Embedding only new/changed units
+
+Snapshot validation
+
+Atomic activation
+
+Rollback
+
+Crash-safe temporary snapshot creation
+
+Manifest/hash validation
+
+Bonus — Evolutionary Retrieval
+
+Implemented:
+
+Lineage recovery
+
+Grouping related revisions
+
+Revision timelines
+
+Best-revision information
+
+Grouped retrieval
+
+Flat all-version retrieval
+
+Duplicate analysis across versions
+
+Measured lineage evidence includes pairwise precision/recall/F1 of 1.0 on the evaluated lineage set.
+
+The current grouped-vs-flat Evolution-NDCG result is approximately tied:
+
+Grouped Evolution-NDCG@10: 0.80146
+Flat Evolution-NDCG@10:    0.80225
+Delta:                      -0.00079 (~ -0.08 percentage points)
+
+Therefore this README does not claim that lineage grouping improves the ranking metric. Its demonstrated benefit is lineage recovery and duplicate suppression.
+
+4. Repository Architecture
+
+acis/
+├── core/
+├── data/
+├── prep/
+├── embed/
+├── lexical/
+├── features/
+├── rank/
+├── engine/
+├── store/
+├── ingest/
+├── lineage/
+├── agent/
+├── api/
+├── cli/
+├── eval/
+├── mteb_adapter/
+└── obs/
+    └── sec/
+
+configs/
+├── dev.yaml
+├── official.yaml
+└── models/
+
+docs/
+├── spec/
+├── PHASE2_REPORT.md
+└── ...
+
+runs/
+├── ledger.jsonl
+├── model_radar.json
+└── ...
+
+scripts/
+└── bench/
+
+5. Requirements
+
+Reference development environment:
+
+Linux / WSL2
+
+Python 3.12
+
+Git
+
+GNU Make
+
+uv
+
+CPU execution supported
+
+GPU optional
+
+The scored query path does not depend on an external LLM.
+
+6. Clean-Machine Setup — Every Command
+
+This section records the complete setup workflow, including the environment/setup issues encountered during preparation.
+
+6.1 Enter the repository
+
+After cloning:
+
+cd ~/Agentic_Code_Intelligence
+pwd
+git status
+git remote -v
+git branch -a
+
+If the repository has not yet been cloned:
+
+git clone <REPOSITORY_URL> Agentic_Code_Intelligence
+cd Agentic_Code_Intelligence
+
+6.2 Install Git and Make
+
+Ubuntu/WSL:
+
+sudo apt update
+sudo apt install git make
+
+Verify:
+
+git --version
+make --version
+
+6.3 Initialize/check Git
+
+If working with an existing cloned repository, do not run git init again. Check it instead:
+
+git status
+
+If starting a repository that genuinely has no .git directory:
+
+git init
+
+6.4 Install uv
+
+The project uses uv for Python environment/dependency management.
+
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source ~/.bashrc
+uv --version
+
+If uv is still not found, reopen the terminal and run:
+
+uv --version
+
+6.5 Set up Python dependencies
+
+make setup
+
+Verify the project CLI:
+
+uv run acis --help
+
+6.6 Hardware/environment check
+
+make doctor
+
+This records the detected hardware profile under:
+
+runs/hardware.json
+
+6.7 Fetch APPS/CoIR assets
+
+make fetch
+
+This is the dataset preparation/network step used by the evaluation workflow.
+
+6.8 Fetch the real model
+
+The selected real encoder is:
+
+Alibaba-NLP/gte-modernbert-base
+
+Intended command:
+
+make fetch-models MODELS=gte-modernbert-base
+
+The model is pinned using its revision and file hashes.
+
+7. Important Clean-Clone Issue: Missing Model Card
+
+A clean checkout currently needs the pinned model card at:
+
+configs/models/gte-modernbert-base.yaml
+
+If it is missing, the model registry intentionally refuses to guess the model and the following command fails:
+
+make fetch-models MODELS=gte-modernbert-base
+
+with an error of the form:
+
+acis: invalid_input: no model card for 'gte-modernbert-base'
+
+make demo or search then fails with:
+
+NotReady: no model card for 'gte-modernbert-base'
+
+This was an actual clean-machine setup issue encountered during repository preparation.
+
+Do not replace the real encoder with acis/hashing-4096 to hide this problem. The hashing encoder was a development/infrastructure stand-in and is not the final real encoder.
+
+Before a clean-clone judge/demo release, the correct pinned GTE model card must be committed under configs/models/ and must match the model metadata used by the recorded evaluation.
+
+To diagnose the repository:
+
+ls configs/models/
+git log --all --oneline -- configs/models
+git ls-tree -r HEAD --name-only | grep 'configs/models'
+
+8. Basic Search
+
+After model setup:
+
+uv run acis search "find the shortest path in a weighted graph"
+
+Another example:
+
+uv run acis search "reverse a linked list"
+
+The results are ranked code units/snippets with retrieval evidence.
+
+9. Demo
+
+Run:
+
+make demo
+
+The demo covers:
+
+P0 retrieval
+
+P1 versioned retrieval
+
+Bonus evolutionary retrieval
+
+Local web UI
+
+UI:
+
+http://127.0.0.1:8000/
+
+For a clean CPU machine, the demo workflow can use the supplied release artifact:
+
+dist/acis-demo-index.zip
+
+This is a demonstration convenience only. The official evaluation is cold and must not depend on a prebuilt demo cache.
+
+10. API
+
+Start the server:
+
+uv run acis serve
+
+Check the UI/API resources:
+
+for p in / /app.css /app.js /favicon.ico; do
+  curl -s -o /dev/null -w "$p %{http_code}\n" http://127.0.0.1:8000$p
+done
+
+Expected response: HTTP 200 for the available resources.
+
+Search
+
+curl -s -X POST localhost:8000/v1/search \
+  -H 'content-type: application/json' \
+  -d '{"query":"reverse a linked list","top_k":3,"explain":true}'
+
+Version update demonstration
+
+curl -s -X POST localhost:8000/v1/repos/apps-history/commit \
+  -H 'content-type: application/json' \
+  -d '{"edits":3}'
+
+Evolution
+
+curl -s -X POST localhost:8000/v1/evolve \
+  -H 'content-type: application/json' \
+  -d '{"query":"sort an array","repo_id":"apps-history","top_k":5}'
+
+11. CLI Operations
+
+Implemented project workflow commands include:
+
+aci index --repo <repo> --from <git|dir|zip|jsonl> --rev <revision>
+aci search "<query>"
+aci versions
+aci activate <version>
+aci rollback
+aci validate
+aci gc
+aci serve
+
+Evaluation commands:
+
+aci eval p0
+aci eval p1
+aci eval bonus
+
+The repository's current installed entry point is invoked in the documented setup examples as uv run acis ....
+
+12. P0 Evaluation
+
+The official P0 evaluation is based on CoIR AppsRetrieval through MTEB.
+
+Primary metrics:
+
+NDCG@10
+
+MRR
+
+The development workflow evaluates the development split before any held-out test evaluation.
+
+Official configuration:
+
+configs/official.yaml
+
+Reproduction:
+
+make reproduce
+
+Verify a run:
+
 uv run acis eval verify-submission --run-dir runs/<run_id>
-```
 
-`configs/official.yaml` is the configuration: `gte-modernbert-base`, Mode B, strict, CPU only. The run is cold on
-purpose — no embedding is read from a cache, so `evaluation_time` includes encoding the whole corpus. On an
-8-core CPU expect about 2.6 hours (projected in `[ledger:gate-055152620da6]`); let it finish uninterrupted.
+The official run is intended to be cold so that stale cached embeddings cannot silently replace the evaluation work.
 
-The official recipe is the one the guidelines specify: `PrePostPipelineEncoder(AbsEncoder)` →
-`mteb.get_task("AppsRetrieval")` → `mteb.evaluate(model, [task], encode_kwargs={"batch_size": 64})`, written
-through a datetime-safe JSON writer (the sample's bare `json.dump` crashes on the result's `date` field), with
-`cache=None, overwrite_strategy="always"` so a stale result cache cannot be mistaken for a run.
+13. Recorded P0 Evidence
 
-Two surfaces ship, from one class: **Mode B** (an honest `encode()`, which mteb's own search wrapper drives) and
-**Mode A** (the full `index`/`search` pipeline). `predict()` is never defined — that would send the object down
-mteb's cross-encoder branch.
+The model-selection bake-off was performed over the full 5,000-query development set.
 
-## What is in the box
+Recorded GTE result:
 
-| | |
-|---|---|
-| **Retrieval** | Exact dense search (one matmul, no ANN below 250k vectors), per-snapshot BM25, candidate union, parse-only features, a cross-fitted LightGBM LambdaRank ranker that **abstains** when its evidence has not fired |
-| **P1 · versions** | Content-addressed store, immutable snapshots, validate-then-activate, atomic ref switch, instant rollback, crash recovery, incremental builds that embed only what changed |
-| **Bonus · evolution** | An evidence-gated alignment cascade (identical → moved → renamed → inferred), lineages closed by union-find, one answer per lineage with its best revision and a timeline |
-| **Surfaces** | `acis` CLI, FastAPI on loopback, a single static page with no CDN, `make demo` |
-| **Evidence** | A hash-chained ledger: every number ACIS reports about itself carries a `run_id`, and a number without one does not appear in any document |
+Model:       Alibaba-NLP/gte-modernbert-base
+Dev queries: 5,000
+NDCG@10:     0.7103456795
+MRR@10:      0.6745552381
+R@100:       0.9378
+Parameters:  149,014,272
+Run ID:      gate-055152620da6
 
-## Measured, with evidence
+A clean-tokenization G5 result was also recorded:
 
-Every figure below is either a ledger row or a file in `runs/`. Numbers about ACIS never appear here without one.
+NDCG@10:     0.723515
+MRR@10:      0.689393
+R@100:       0.9276
+Run ID:      gate-bffed3d40ab2
 
-| What | Result | Evidence |
-|---|---|---|
-| Metric parity with mteb/pytrec_eval | exact to 1e-9 on random, oracle and BM25 runs, including inside the float32 collapse zone | `tests/metamorphic/test_parity.py` |
-| BM25 parity with `mteb/baseline-bm25s` | 100 % identical top-10 on all 5,000 dev queries | `[ledger:dev-8717922a9ca4]`, `[ledger:dev-ee395f07e048]` |
-| Retrieval core latency | p95 16.4 ms at 8,765 units (stand-in encoder; see the note in `docs/PHASE2_REPORT.md`) | `[ledger:bench-b3586309bd8e]` |
-| P1 update time | a 1- or 10-unit change searchable in ~2 s p95 where a full rebuild takes ~11 s, against a 30 s target | `[ledger:bench-9153e49050de]` |
-| Encoder bake-off (G-M) | `gte-modernbert-base` (149M params) selected at NDCG@10 71.03 on all 5,000 dev queries; the two alternatives were 14 and 17 pt behind | `[ledger:gate-055152620da6]`, `configs/gates/G-M.yaml` |
-| Determinism | bit-identical vectors across runs; identical top-10 rankings at 8 vs 2 threads; cached ≡ recomputed (cosine 1.0) | `[ledger:bench-d8ed869255a2]` |
-| Mode A (hybrid + learned ranker, as shipped) vs frozen dense | NDCG@10 72.86 vs 71.03 out of fold on all 5,000 dev queries: +1.82 pt, CI [+1.42, +2.24]; plain reciprocal-rank fusion measured worse than dense alone (`configs/gates/G2.yaml`), so BM25 enters only through the ranker | `[ledger:gate-c88e29bfa5ed]`, `[ledger:gate-5ae1789d8614]` |
+These are development measurements, not held-out test claims.
 
-## Verify it yourself
+14. P0 Retrieval Pipeline
 
-Every check below runs locally and offline after `make setup`, `make fetch` and
-`make fetch-models MODELS=gte-modernbert-base`. Where this section gives a number, it cites the ledger row that
-produced it. Everything else is described by the *shape* of the output, because timings depend on your machine.
+The retrieval pipeline contains:
 
-**1. The integrity tests stay green** (metric parity, score ties, INV-1 evidence, the seal guard):
+route
+  ↓
+query preparation
+  ↓
+encode
+  ↓
+dense retrieval
+  ↓
+BM25 / lexical retrieval
+  ↓
+candidate union
+  ↓
+features
+  ↓
+ranking / fusion
+  ↓
+tail handling
+  ↓
+final composition
+  ↓
+confidence
 
-```bash
-uv run pytest -q tests/metamorphic tests/contract tests/security
-```
+Query preparation supports:
 
-Expect all passed plus exactly 3 `xfailed`. Those are the documented guard-hook gaps (`tests/security/test_guard_hook.py`):
-a regex hook cannot see shell indirection, which is why the held-out labels live outside the tree.
+Query normalization
 
-**2. Free-text search with the real encoder (P0)**
+Model-specific task formatting
 
-```bash
-uv run acis search "reverse a linked list" --top-k 5
-```
+Statement-like vs generic routing
 
-Expect `encoder : Alibaba-NLP/gte-modernbert-base`, a snapshot of 8,765 units, an `order` line naming what ranked
-the list, per-stage `timings`, and five rows with a cosine similarity, the dense rank, the BM25 rank (or `-` when
-BM25 did not retrieve it), the key, the content hash and the first line of the code. A short question like this is
-routed off the learned ranker (`order: dense (routed: …)`); a full problem statement goes through it.
+Multiple query views
 
-**3. The page (P0, P1, Bonus)**
+Dense truncation configuration
 
-```bash
-uv run python scripts/demo/build_history.py      # once: the 5-version APPS repository (minutes, real encoder)
-uv run acis serve                                 # ready when /readyz says "p0_corpus": true
-for p in / /app.css /app.js /favicon.ico; do curl -s -o /dev/null -w "$p %{http_code}\n" http://127.0.0.1:8000$p; done
-```
+Lexical normalization
 
-Expect `200` for all four. Open <http://127.0.0.1:8000/>:
+The full document remains available to BM25/features while dense representation limits apply to the embedding path.
 
-- **Search**: type any query. Each hit shows its cosine similarity, dense and BM25 ranks and its code; the
-  summary line shows what ordered the list and the engine's stage timings; the footer shows this session's
-  p50/p95 latency.
-- **Versions**: `apps-history` pinned to `v2` returns only v2's units. *Commit* edits three units and reports
-  `vN searchable in X s · 3 unit(s) embedded, M reused`. *Roll back* moves the active version back.
-- **Evolution**: *Grouped by lineage* shows each unit once with a timeline across versions, its best revision
-  and that revision's code. *Flat · all versions* shows every matching revision and the flat duplicate rate
-  that grouping removes.
+15. Model Selection
 
-The same checks as API calls:
+The encoder was selected using a full development-set bake-off rather than a single hand-picked query.
 
-```bash
-curl -s -X POST localhost:8000/v1/search -H 'content-type: application/json' \
-  -d '{"query":"reverse a linked list","top_k":3,"explain":true}'        # results[].signals, explanation.ordered_by
-curl -s -X POST localhost:8000/v1/repos/apps-history/commit -H 'content-type: application/json' -d '{"edits":3}'
-curl -s -X POST localhost:8000/v1/evolve -H 'content-type: application/json' \
-  -d '{"query":"sort an array","repo_id":"apps-history","top_k":5}'      # groups[].timeline, groups[].best.source
-```
+Selected real model:
 
-**4. The accuracy numbers (dev split only, never the held-out labels)**
+Alibaba-NLP/gte-modernbert-base
 
-```bash
-uv run python scripts/bench/ltr_build.py --model gte-modernbert-base --tokenizer code --limit 0
-```
+16. P1 — Versioned Retrieval
 
-This rebuilds, out of fold on all 5,000 dev queries, the table behind `[ledger:gate-5ae1789d8614]` (ranker on
-every query) and `[ledger:gate-c88e29bfa5ed]` (Mode A as shipped: NDCG@10 72.86 against dense 71.03). With the
-vectors cached it takes minutes; on a clean machine the corpus and queries are embedded first, which takes hours
-on a CPU.
+P1 supports changing repositories through immutable versioned snapshots.
 
-**Not verified yet, and not claimed:**
+For a new version the system detects:
 
-- Latency against spec 02 §7 on the reference host. The only ledgered latency row is the stand-in encoder's
-  `[ledger:bench-b3586309bd8e]`.
-- The learned ranker's robustness: **it fails gate G-OOD**. It is more brittle than the dense base when sentences
-  are dropped from a query (`[ledger:dev-070bc7df4efa]`), and it fails the stricter limits for lower-casing
-  (`[ledger:dev-bcd1f92ff973]`) and format noise (`[ledger:dev-4473ee525fbe]`). The official primary therefore
-  stays Mode B (dense) until that is resolved.
-- The Bonus ranking claim. Grouping removes duplicates and lineage recovery is exact, but grouped and flat tie on
-  Evolution-NDCG@10 (`[ledger:bench-52d48f680740]`).
+unchanged units
 
-## How it is kept honest
+changed units
 
-- **The held-out labels are physically outside the working tree** (`~/.acis-sealed/`). Dev work uses the TRAIN
-  split only; one module may read the seal, and only inside the official run. Hooks catch accidents — they are
-  not the boundary (D19, INV-8).
-- **Gates decide, not opinions.** Every claimed improvement is a paired bootstrap over 10,000 resamples on all
-  5,000 dev queries (or K-fold out-of-fold for anything trained), needing Δ ≥ +0.5 pt *and* a CI lower bound
-  above zero. Ties go to the cheaper system.
-- **Nothing degrades silently.** Every fallback increments a counter and appears in `degradations`; a strict run
-  refuses all of them. A stand-in encoder says it cannot ship, and the strict path enforces that.
-- **Untrusted code is parsed, never executed** (INV-5) — no import, no `exec`, no `eval`, no pickle. Archives
-  stream, git is read with no checkout and hooks disabled, and every path goes through one `safe_path`.
-- **Query-agnostic by construction** (INV-15): no closed list of templates, phrases, headers or moduli gates
-  correctness; every pattern extractor fails soft and is masked during training.
+added units
 
-## Layout
+deleted units
 
-```
-src/acis/         core · prep · embed · lexical · features · rank · engine · store · ingest · lineage · eval · api · cli
-docs/spec/        the contracts each package is built against
-docs/adr/         decisions that deviate from them, with the reasoning
-runs/ledger.jsonl every number, hash-chained
-tests/            unit · property · metamorphic · contract · integration · security · chaos · robustness
-```
+renamed units
 
-Start with `CLAUDE.md` (the constitution), then `docs/spec/`, then each package's `README.md` — every package
-states its own contract and names the test that enforces it.
+Unchanged representations can be reused. New/changed units are embedded as required.
 
-## Status
+Snapshot creation is validated before activation and activation is atomic. Rollback returns the active state to a previous valid version.
 
-Phase 1 (harness) and Track B1 (P1) are built, with reports in `docs/`. In Phase 2 the encoder is chosen (G-M),
-the query-preparation sweep (G1) is being measured, and the first release candidate (RC0) is next; Phase 4's
-hybrid ranking and the Bonus are built and measured on the dev split. `docs/STATUS.md` is the single source of progress truth, and the PPT and demo video are the
-owner's (`docs/submission/OWNER_HANDOFF.md`).
+Temporary snapshot directories use a .tmp-<token> workflow so incomplete builds are not exposed as valid snapshots.
+
+17. Bonus — Evolutionary Retrieval
+
+The Bonus supports retrieval across versions.
+
+Flat
+
+Every matching revision is represented separately.
+
+Grouped by lineage
+
+Related revisions are grouped so that a logical unit is represented once, with its timeline and best revision available.
+
+Measured lineage evidence:
+
+Pairwise precision: 1.0
+Pairwise recall:    1.0
+Pairwise F1:        1.0
+
+Duplicate-rate@10 evaluation:
+
+Grouped: 0.00
+Flat:    0.77
+
+The current grouped Evolution-NDCG result does not establish a ranking-quality improvement, so the project does not claim one.
+
+18. Testing and Evaluation Discipline
+
+The project contains tests for retrieval contracts, model registry behavior, indexing, snapshots, version isolation, incremental updates, rollback, crash recovery, lineage, evaluation, and UI/API integration.
+
+Development evaluation follows:
+
+Implement change
+      ↓
+Tests
+      ↓
+DEV evaluation
+      ↓
+Ledger entry
+      ↓
+Inspect metrics/failures
+      ↓
+Only then consider held-out TEST
+
+Do not tune against held-out test labels.
+
+Do not fake, estimate, or manually invent accuracy numbers. If a result has not been measured, report it as Not measured.
+
+19. Clean-Machine Troubleshooting
+
+make setup fails because uv is missing
+
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source ~/.bashrc
+uv --version
+make setup
+
+APPS assets are missing
+
+make fetch
+
+make fetch-models MODELS=gte-modernbert-base fails
+
+Error:
+
+acis: invalid_input: no model card for 'gte-modernbert-base'
+
+Check:
+
+ls configs/models/
+
+Required:
+
+configs/models/gte-modernbert-base.yaml
+
+Do not silently substitute another model.
+
+make demo fails with NotReady
+
+If the preceding message says the GTE model card is missing, fix the model-card/repository configuration first and rerun:
+
+make demo
+
+Search fails before model setup
+
+Example:
+
+uv run acis search "find the shortest path in a weighted graph"
+
+If the error is the missing GTE model card, complete the model setup first.
+
+20. Reproducibility
+
+A reproducible run records:
+
+Model name and revision
+
+Model file fingerprints
+
+Preparation/configuration fingerprint
+
+Dataset and split
+
+Code/config revision
+
+NDCG@10
+
+MRR
+
+Query count
+
+Runtime where measured
+
+Run ID
+
+Ledger entry
+
+Hardware profile
+
+Run artifacts are kept under runs/ and accuracy claims are tied to ledgered measurements.
+
+21. Judge / Demo Checklist
+
+On a fully configured machine:
+
+make doctor
+make fetch
+make fetch-models MODELS=gte-modernbert-base
+uv run acis search "find the shortest path in a weighted graph"
+make demo
+
+Open:
+
+http://127.0.0.1:8000/
+
+Demonstrate:
+
+Natural-language query → ranked code snippets
+
+Retrieval evidence and stage information
+
+P1 version selection
+
+Incremental version update
+
+Rollback
+
+Bonus grouped lineage retrieval
+
+Flat all-version retrieval
+
+Duplicate suppression / lineage evidence
+
+ACIS — Agentic Code Intelligence
+
+Samsung PRISM GenAI Hackathon — Theme 1
+
+Core objective: high-quality code retrieval from natural-language queries, with version-aware and lineage-aware retrieval extensions.
