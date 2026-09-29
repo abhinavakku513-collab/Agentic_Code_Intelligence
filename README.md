@@ -74,6 +74,83 @@ Every figure below is either a ledger row or a file in `runs/`. Numbers about AC
 | Determinism | bit-identical vectors across runs; identical top-10 rankings at 8 vs 2 threads; cached ≡ recomputed (cosine 1.0) | `[ledger:bench-d8ed869255a2]` |
 | Mode A (hybrid + learned ranker, as shipped) vs frozen dense | NDCG@10 72.86 vs 71.03 out of fold on all 5,000 dev queries: +1.82 pt, CI [+1.42, +2.24]; plain reciprocal-rank fusion measured worse than dense alone (`configs/gates/G2.yaml`), so BM25 enters only through the ranker | `[ledger:gate-c88e29bfa5ed]`, `[ledger:gate-5ae1789d8614]` |
 
+## Verify it yourself
+
+Every check below runs locally and offline after `make setup`, `make fetch` and
+`make fetch-models MODELS=gte-modernbert-base`. Where this section gives a number, it cites the ledger row that
+produced it. Everything else is described by the *shape* of the output, because timings depend on your machine.
+
+**1. The integrity tests stay green** (metric parity, score ties, INV-1 evidence, the seal guard):
+
+```bash
+uv run pytest -q tests/metamorphic tests/contract tests/security
+```
+
+Expect all passed plus exactly 3 `xfailed`. Those are the documented guard-hook gaps (`tests/security/test_guard_hook.py`):
+a regex hook cannot see shell indirection, which is why the held-out labels live outside the tree.
+
+**2. Free-text search with the real encoder (P0)**
+
+```bash
+uv run acis search "reverse a linked list" --top-k 5
+```
+
+Expect `encoder : Alibaba-NLP/gte-modernbert-base`, a snapshot of 8,765 units, an `order` line naming what ranked
+the list, per-stage `timings`, and five rows with a cosine similarity, the dense rank, the BM25 rank (or `-` when
+BM25 did not retrieve it), the key, the content hash and the first line of the code. A short question like this is
+routed off the learned ranker (`order: dense (routed: …)`); a full problem statement goes through it.
+
+**3. The page (P0, P1, Bonus)**
+
+```bash
+uv run python scripts/demo/build_history.py      # once: the 5-version APPS repository (minutes, real encoder)
+uv run acis serve                                 # ready when /readyz says "p0_corpus": true
+for p in / /app.css /app.js /favicon.ico; do curl -s -o /dev/null -w "$p %{http_code}\n" http://127.0.0.1:8000$p; done
+```
+
+Expect `200` for all four. Open <http://127.0.0.1:8000/>:
+
+- **Search**: type any query. Each hit shows its cosine similarity, dense and BM25 ranks and its code; the
+  summary line shows what ordered the list and the engine's stage timings; the footer shows this session's
+  p50/p95 latency.
+- **Versions**: `apps-history` pinned to `v2` returns only v2's units. *Commit* edits three units and reports
+  `vN searchable in X s · 3 unit(s) embedded, M reused`. *Roll back* moves the active version back.
+- **Evolution**: *Grouped by lineage* shows each unit once with a timeline across versions, its best revision
+  and that revision's code. *Flat · all versions* shows every matching revision and the flat duplicate rate
+  that grouping removes.
+
+The same checks as API calls:
+
+```bash
+curl -s -X POST localhost:8000/v1/search -H 'content-type: application/json' \
+  -d '{"query":"reverse a linked list","top_k":3,"explain":true}'        # results[].signals, explanation.ordered_by
+curl -s -X POST localhost:8000/v1/repos/apps-history/commit -H 'content-type: application/json' -d '{"edits":3}'
+curl -s -X POST localhost:8000/v1/evolve -H 'content-type: application/json' \
+  -d '{"query":"sort an array","repo_id":"apps-history","top_k":5}'      # groups[].timeline, groups[].best.source
+```
+
+**4. The accuracy numbers (dev split only, never the held-out labels)**
+
+```bash
+uv run python scripts/bench/ltr_build.py --model gte-modernbert-base --tokenizer code --limit 0
+```
+
+This rebuilds, out of fold on all 5,000 dev queries, the table behind `[ledger:gate-5ae1789d8614]` (ranker on
+every query) and `[ledger:gate-c88e29bfa5ed]` (Mode A as shipped: NDCG@10 72.86 against dense 71.03). With the
+vectors cached it takes minutes; on a clean machine the corpus and queries are embedded first, which takes hours
+on a CPU.
+
+**Not verified yet, and not claimed:**
+
+- Latency against spec 02 §7 on the reference host. The only ledgered latency row is the stand-in encoder's
+  `[ledger:bench-b3586309bd8e]`.
+- The learned ranker's robustness: **it fails gate G-OOD**. It is more brittle than the dense base when sentences
+  are dropped from a query (`[ledger:dev-070bc7df4efa]`), and it fails the stricter limits for lower-casing
+  (`[ledger:dev-bcd1f92ff973]`) and format noise (`[ledger:dev-4473ee525fbe]`). The official primary therefore
+  stays Mode B (dense) until that is resolved.
+- The Bonus ranking claim. Grouping removes duplicates and lineage recovery is exact, but grouped and flat tie on
+  Evolution-NDCG@10 (`[ledger:bench-52d48f680740]`).
+
 ## How it is kept honest
 
 - **The held-out labels are physically outside the working tree** (`~/.acis-sealed/`). Dev work uses the TRAIN
