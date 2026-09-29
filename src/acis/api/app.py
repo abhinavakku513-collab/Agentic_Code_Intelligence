@@ -315,6 +315,9 @@ def preload_p0(engine: Any) -> str | None:
         return None
     started = time.perf_counter()
     snapshot = engine.build_snapshot(apps.load_corpus(), source="serve:p0")
+    # Parse-only features for every document up front, so the first queries do not pay for it one by one.
+    features = engine.snapshot_data(snapshot).warm_features()
+    log.info("api.p0_features", documents=features, seconds=round(time.perf_counter() - started, 1))
     log.info(
         "api.p0_ready",
         snapshot=snapshot.snapshot_id,

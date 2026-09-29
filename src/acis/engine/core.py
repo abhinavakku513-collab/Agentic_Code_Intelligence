@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import heapq
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -93,6 +95,15 @@ class SnapshotData:
             self._features[body_hash] = cached
         return cached
 
+    def warm_features(self) -> int:
+        """Extract every document's features now rather than on the first query that ranks it. Returns the count.
+
+        The content is immutable, so this changes no ranking — it moves ~0.1 s of first-query parsing to start-up.
+        """
+        for doc_id in self.doc_ids:
+            self.features_of(doc_id)
+        return len(self._features)
+
     def duplicate_count(self, doc_id: str) -> int:
         """How many documents in this snapshot share this exact body — a corpus fact, never a query one."""
         if not self._dup_counts:
@@ -128,6 +139,24 @@ DEFAULT_CONFIG: dict[str, object] = {
     "lexical": {"k1": 1.5, "b": 0.75, "stemmer": "english"},
     "retrieve": {"dense_k": 100, "lexical_k": 30, "union_cap": 100, "top_k_out": 1000},
 }
+
+
+#: Per-request stage timings (ms). A ContextVar, so concurrent API requests never mix their clocks.
+_STAGES: ContextVar[dict[str, float] | None] = ContextVar("acis_stages", default=None)
+
+
+@contextmanager
+def stage(name: str) -> Iterator[None]:
+    """Time one pipeline stage into the current request's `timings_ms`; free when no request is timing."""
+    sink = _STAGES.get()
+    if sink is None:
+        yield
+        return
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        sink[name] = sink.get(name, 0.0) + (time.perf_counter() - started) * 1000
 
 
 def query_encoder_texts(config: Any, normalised_query: str) -> tuple[str, ...]:
@@ -402,7 +431,8 @@ class AcisEngine(VersionedEngineMixin):
         vector = None
         if bank is not None and self.encoder is not None:
             try:
-                vector = np.asarray(self.encoder.encode([query], is_query=True)[0], dtype=np.float32)
+                with stage("route_encode"):
+                    vector = np.asarray(self.encoder.encode([query], is_query=True)[0], dtype=np.float32)
             except Exception:  # noqa: BLE001 — a routing failure routes down, it never fails a search
                 vector = None
         return decide(
@@ -440,9 +470,10 @@ class AcisEngine(VersionedEngineMixin):
             self.counters.incr("cache.qemb.hit")
             return cached
         self.counters.incr("cache.qemb.miss")
-        vector = pooled_query_vector(
-            np.asarray(self.encoder.encode(list(texts), is_query=True, route=route), dtype=np.float32)
-        )
+        with stage("encode"):
+            vector = pooled_query_vector(
+                np.asarray(self.encoder.encode(list(texts), is_query=True, route=route), dtype=np.float32)
+            )
         self._query_vector_cache[key] = vector
         return vector
 
@@ -454,8 +485,9 @@ class AcisEngine(VersionedEngineMixin):
         if data.vectors is None or self.encoder is None:
             raise NotReady("the dense channel is not available for this snapshot")
         vector = self._query_vector(data.snapshot.snapshot_id, query, route=route)
-        scores = exact_search(vector.reshape(1, -1), data.vectors)[0]
-        return self._stable_top_k(data, scores, data.size if k is None else k)
+        with stage("dense"):
+            scores = exact_search(vector.reshape(1, -1), data.vectors)[0]
+            return self._stable_top_k(data, scores, data.size if k is None else k)
 
     @classmethod
     def _stable_top_k(cls, data: SnapshotData, scores: np.ndarray, k: int) -> list[tuple[str, float]]:
@@ -514,11 +546,14 @@ class AcisEngine(VersionedEngineMixin):
         from acis.features.query import extract as query_features  # noqa: PLC0415
         from acis.rank import candidates as cand  # noqa: PLC0415
 
-        dense_order = self._dense_ranking(data, query, route=route, k=None)
         retrieve = self.config.section("retrieve")
         lexical_k = int(retrieve.get("lexical_k", 30))
         union_cap = int(retrieve.get("union_cap", 100))
         dense_k = int(retrieve.get("dense_k", 100))
+        # Only the top `dense_k` feed the pool and the tail only has to fill `want` past the head (≤ union_cap), so
+        # this prefix is all that is ever read. `_stable_top_k` is exact, so it is the same prefix a full sort gives
+        # — without building and tie-sorting all 8,765 documents on every query.
+        dense_order = self._dense_ranking(data, query, route=route, k=min(data.size, want + union_cap + dense_k))
 
         lexical_order: list[tuple[str, float]] = []
         if data.lexical is not None and "lexical" not in data.missing:
@@ -531,17 +566,18 @@ class AcisEngine(VersionedEngineMixin):
             return dense_order[:want]
         pool = self._with_prf(data, query, route=route, pool=pool)
 
-        qf = query_features(query)
-        bridge = {c.doc_id: bridge_features(qf, data.features_of(c.doc_id)) for c in pool}
-        doc_meta = {
-            c.doc_id: {
-                "n_tokens": data.features_of(c.doc_id).n_tokens,
-                "parse_ok": data.features_of(c.doc_id).parse_ok,
-                "dup_cluster_size": data.duplicate_count(c.doc_id),
+        with stage("features"):
+            qf = query_features(query)
+            bridge = {c.doc_id: bridge_features(qf, data.features_of(c.doc_id)) for c in pool}
+            doc_meta = {
+                c.doc_id: {
+                    "n_tokens": data.features_of(c.doc_id).n_tokens,
+                    "parse_ok": data.features_of(c.doc_id).parse_ok,
+                    "dup_cluster_size": data.duplicate_count(c.doc_id),
+                }
+                for c in pool
             }
-            for c in pool
-        }
-        matrix = cand.feature_matrix(pool, bridge=bridge, query_tokens=qf.n_tokens, doc_meta=doc_meta)
+            matrix = cand.feature_matrix(pool, bridge=bridge, query_tokens=qf.n_tokens, doc_meta=doc_meta)
         doc_ids = [c.doc_id for c in pool]
 
         ranker = self.ranker
@@ -556,7 +592,8 @@ class AcisEngine(VersionedEngineMixin):
             counters.incr(f"route.{route}.ltr_skipped")
             head = []  # the frozen dense order, exactly
         elif ranker is not None:
-            head, abstained = ranker.rerank(doc_ids, matrix)
+            with stage("ranker"):
+                head, abstained = ranker.rerank(doc_ids, matrix)
             if abstained:
                 # Thin evidence: the ranker's contract is "the dense order stands". Not reciprocal-rank fusion (G2
                 # measured it harmful here), and not a fallback: abstaining is the designed behaviour, counted.
@@ -636,7 +673,8 @@ class AcisEngine(VersionedEngineMixin):
     def _lexical_ranking(self, data: SnapshotData, query: str, k: int) -> list[tuple[str, float]]:
         if data.lexical is None:
             raise NotReady("the lexical channel is not available for this snapshot")
-        return data.lexical.search_one(lexical_view(query), k)
+        with stage("bm25"):
+            return data.lexical.search_one(lexical_view(query), k)
 
     # -- the batch surface the adapter uses -----------------------------------------------------------------------
     def search_batch(
@@ -750,6 +788,8 @@ class AcisEngine(VersionedEngineMixin):
         if data.snapshot.state != "VALID" and not req.allow_partial:
             raise SnapshotInvalid(f"snapshot {data.snapshot.snapshot_id} is {data.snapshot.state} (INV-9)")
 
+        stages: dict[str, float] = {}
+        token = _STAGES.set(stages)
         t_norm = time.perf_counter()
         query, truncated = self.normalise_query(req.query)
         route = self.route(query)
@@ -780,6 +820,7 @@ class AcisEngine(VersionedEngineMixin):
             for rank, (doc_id, score) in enumerate(ranked, start=1)
         ]
         confidence, no_strong_match = self._confidence(ranked)
+        _STAGES.reset(token)
         total_ms = (time.perf_counter() - started) * 1000
         return SearchResponse(
             snapshot=SnapshotRef(
@@ -797,6 +838,7 @@ class AcisEngine(VersionedEngineMixin):
                 "normalize": round((t_rank - t_norm) * 1000, 3),
                 "rank": round((time.perf_counter() - t_rank) * 1000, 3),
                 "total": round(total_ms, 3),
+                **{f"stage.{k}": round(v, 3) for k, v in stages.items()},
             },
             degradations=request_counters.degradations(),
         )
