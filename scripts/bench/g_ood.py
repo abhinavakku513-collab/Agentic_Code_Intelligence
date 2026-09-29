@@ -159,7 +159,8 @@ def main(argv: list[str] | None = None) -> int:
                 n_docs=8765,
                 notes="G-OOD perturbation family; Mode A as shipped (out of fold) vs frozen dense; dev split only",
             )
-            print(family, ladder.record(result, kind="dev", extra={"gate": "G-OOD", **e}))
+            extra = {k: v for k, v in e.items() if k != "seconds"}
+            print(family, ladder.record(result, kind="dev", extra={"gate": "G-OOD", **extra}))
     return 0 if report["passes"] else 1
 
 
