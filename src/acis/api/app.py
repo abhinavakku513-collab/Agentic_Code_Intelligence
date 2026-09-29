@@ -68,6 +68,7 @@ def _hit_out(hit: Hit) -> dict[str, Any]:
             "unit_id": hit.unit.unit_id,
             "key": hit.unit.key,
             "version": hit.unit.version_id,
+            "repo_id": hit.unit.repo_id,
             "body_hash": hit.unit.body_hash,
             "n_bytes": hit.unit.n_bytes,
         },
@@ -79,7 +80,7 @@ def _hit_out(hit: Hit) -> dict[str, Any]:
 def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> Any:
     """Build the FastAPI application around one engine instance."""
     from fastapi import Depends, FastAPI, Header, HTTPException, Request
-    from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 
     if engine is None:
         from acis.core.config import load_frozen_config
@@ -142,6 +143,8 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
                 "version": response.snapshot.version,
                 "complete": response.snapshot.complete,
                 "missing_channels": list(response.snapshot.missing_channels),
+                "repo_id": response.snapshot.repo_id,
+                "n_units": response.snapshot.n_units,
             },
             "results": [_hit_out(h) for h in response.results],
             "route": response.route,
@@ -273,6 +276,49 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
             "removed": list(comparison.removed),
             "changed": list(comparison.changed),
         }
+
+    # -- the recorded P0 evaluation (read-only: ledger rows and the artifact they pin) --------------------------
+    # Not an evaluation endpoint: nothing here ranks a query against labels or computes a metric. It serves what
+    # `scripts/bench/eval_pipeline.py` recorded, verbatim, so the page has one source of truth (INV-14).
+    @app.get("/v1/benchmarks/p0", dependencies=guard)
+    def benchmark_p0() -> dict[str, Any]:
+        from acis.api import benchmarks
+
+        return benchmarks.latest_pipeline_runs()
+
+    @app.get("/v1/benchmarks/p0/panel", dependencies=guard, response_class=HTMLResponse)
+    def benchmark_p0_panel() -> str:
+        """The panel as HTML, rendered once from the ledger row; the page inserts it verbatim."""
+        from acis.api import benchmarks
+
+        return benchmarks.render_panel(benchmarks.latest_pipeline_runs())
+
+    @app.get("/v1/benchmarks/p0/queries", dependencies=guard)
+    def benchmark_p0_queries(only: str = "all", offset: int = 0, limit: int = 50) -> dict[str, Any]:
+        from acis.api import benchmarks
+
+        if only not in ("all", "missed", "improved", "worsened", "generic"):
+            raise InvalidInput("unknown filter", only=only)
+        return benchmarks.per_query(only=only, offset=max(0, offset), limit=max(1, min(limit, 200)))
+
+    @app.get("/v1/benchmarks/p0/queries/{query_id}", dependencies=guard)
+    def benchmark_p0_query(query_id: str) -> dict[str, Any]:
+        """One query's record, plus the code of its gold document and of what the pipeline ranked above it —
+        re-read from the P0 snapshot's content store (INV-1), when the P0 corpus is loaded."""
+        from acis.api import benchmarks
+
+        record = benchmarks.query_detail(query_id)
+        data = next(iter(getattr(engine, "_snapshots", {}).values()), None)
+
+        def code(doc_id: str) -> dict[str, Any]:
+            if data is None or doc_id not in data.hash_of:
+                return {"doc_id": doc_id, "available": False}
+            text = data.text_of(doc_id)
+            return {"doc_id": doc_id, "available": True, "body_hash": data.hash_of[doc_id], "source": text}
+
+        record["gold_code"] = [code(d) for d in record.get("gold", [])]
+        record["top10_full_code"] = [code(d) for d in record.get("top10_full", [])]
+        return record
 
     # -- operations -----------------------------------------------------------------------------------------------
     @app.get("/healthz", response_model=schemas.HealthOut)

@@ -59,6 +59,7 @@ class UnitOut(BaseModel):
     unit_id: str
     key: str
     version: str = "-"
+    repo_id: str = "-"
     body_hash: str
     n_bytes: int
 
@@ -76,6 +77,8 @@ class SnapshotOut(BaseModel):
     version: str
     complete: bool
     missing_channels: list[str] = Field(default_factory=list)
+    repo_id: str = "-"
+    n_units: int = 0
 
 
 class SearchOut(BaseModel):
