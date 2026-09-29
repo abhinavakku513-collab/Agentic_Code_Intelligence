@@ -24,6 +24,7 @@ without anyone noticing.
 
 from __future__ import annotations
 
+import functools
 import re
 from collections.abc import Sequence
 from typing import Any
@@ -133,23 +134,32 @@ def split_identifier(name: str) -> list[str]:
     return parts or ([joined] if joined else [])
 
 
+#: One alternation in the table's order (longest first), so a scan finds exactly what the per-position loop did —
+#: the loop tried every operator at every character in Python and was the single largest cost of indexing.
+_OPERATOR_RE = re.compile("|".join(re.escape(symbol) for symbol, _ in OPERATORS))
+_OPERATOR_TOKEN = dict(OPERATORS)
+
+
 def operator_tokens(text: str) -> list[str]:
     """One token per operator *occurrence*, so using `%` twice counts twice — term frequency is the point."""
-    found: list[str] = []
-    index = 0
-    while index < len(text):
-        for symbol, token in OPERATORS:
-            if text.startswith(symbol, index):
-                found.append(token)
-                index += len(symbol)
-                break
-        else:
-            index += 1
-    return found
+    return [_OPERATOR_TOKEN[m.group(0)] for m in _OPERATOR_RE.finditer(text)]
 
 
 def code_tokens(text: str, *, keep_stopwords: bool = False, stopwords: frozenset[str] | None = None) -> list[str]:
-    """Tokenise one document or query for the code-aware lexical channel."""
+    """Tokenise one document or query for the code-aware lexical channel.
+
+    Memoised by text: versions of a repository share almost every body, and each version's lexical index used to
+    re-tokenise all of them. A pure function of its arguments, so the cache can never change a token.
+    """
+    return list(_code_tokens_cached(text, keep_stopwords, stopwords))
+
+
+@functools.lru_cache(maxsize=65536)
+def _code_tokens_cached(text: str, keep_stopwords: bool, stopwords: frozenset[str] | None) -> tuple[str, ...]:
+    return tuple(_code_tokens(text, keep_stopwords=keep_stopwords, stopwords=stopwords))
+
+
+def _code_tokens(text: str, *, keep_stopwords: bool = False, stopwords: frozenset[str] | None = None) -> list[str]:
     if not text:
         return []
     # Operators are read from the *original* text: rewriting `**` for the numeric fold would otherwise erase the

@@ -80,7 +80,6 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
     """Build the FastAPI application around one engine instance."""
     from fastapi import Depends, FastAPI, Header, HTTPException, Request
     from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
-    from fastapi.staticfiles import StaticFiles
 
     if engine is None:
         from acis.core.config import load_frozen_config
@@ -298,6 +297,7 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
             "ready": getattr(engine, "encoder", None) is not None,
             # Whether the default corpus of the page (`repo_id="-"`, the APPS one) can be searched yet.
             "p0_corpus": bool(getattr(engine, "_snapshots", None)),
+            "p0_units": max((d.size for d in getattr(engine, "_snapshots", {}).values()), default=0),
             "uptime_s": round(time.time() - started, 1),
         }
 
@@ -338,12 +338,26 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
         }
 
     # -- the UI ------------------------------------------------------------------------------------------------
+    # The page references its assets relatively (`app.css`, `app.js`), so they must resolve from `/`. They were
+    # mounted under `/ui` while the page was served at `/`: every asset 404'd and the page had no style and no
+    # behaviour. Explicit routes, and nothing else under the root, so the API's paths can never be shadowed.
     if STATIC_DIR.is_dir():
-        app.mount("/ui", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")
+        media = {".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".html": "text/html"}
 
-        @app.get("/")
+        @app.get("/", include_in_schema=False)
         def index() -> Any:
-            return FileResponse(STATIC_DIR / "index.html")
+            return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
+
+        @app.get("/favicon.ico", include_in_schema=False)
+        def favicon() -> Any:
+            return FileResponse(STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
+
+        @app.get("/{asset}", include_in_schema=False)
+        def static_asset(asset: str) -> Any:
+            path = (STATIC_DIR / asset).resolve()
+            if path.parent != STATIC_DIR.resolve() or not path.is_file() or path.suffix not in media:
+                raise HTTPException(status_code=404, detail="not found")
+            return FileResponse(path, media_type=media[path.suffix])
 
     return app
 
@@ -374,6 +388,26 @@ def preload_p0(engine: Any) -> str | None:
     return str(snapshot.snapshot_id)
 
 
+def preload_repositories(engine: Any) -> None:
+    """Open every repository's versions and build its lineage index before the first request needs them.
+
+    Both are per-process caches over immutable snapshots, so warming them changes no answer — it moves a few
+    seconds from a judge's first P1 or Bonus click to start-up.
+    """
+    from acis.store import catalog
+
+    with catalog.open_catalog() as db:
+        repos = [str(r["repo_id"]) for r in catalog.list_repos(db)]
+    for repo in repos:
+        started = time.perf_counter()
+        try:
+            index = engine.lineage_index(repo)
+        except Exception as exc:  # noqa: BLE001 — a repository that cannot be warmed is still served lazily
+            log.info("api.repo_not_warmed", repo=repo, reason=type(exc).__name__)
+            continue
+        log.info("api.repo_warm", repo=repo, lineages=index.size, seconds=round(time.perf_counter() - started, 1))
+
+
 def serve(
     *,
     host: str = "127.0.0.1",
@@ -396,6 +430,7 @@ def serve(
     config = load_frozen_config(config_path)
     engine = AcisEngine.from_config(config, encoder=build_encoder(config))
     preload_p0(engine)
+    preload_repositories(engine)
     log.info("api.serving", host=host, port=port, config=config_path)
     uvicorn.run(create_app(engine, config_path=config_path), host=host, port=port, reload=reload, log_level="info")
 

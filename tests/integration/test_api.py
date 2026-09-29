@@ -141,13 +141,24 @@ def test_there_is_no_evaluation_endpoint(client):
 
 
 def test_the_ui_is_served_and_references_no_remote_asset(client):
-    """D15: the demo machine has no network, so a CDN reference would be a blank page on the day."""
+    """D15: the demo machine has no network, so a CDN reference would be a blank page on the day. And every asset
+    the page references must load *from where the page is served*: they were mounted under /ui while the page is
+    served at /, so the browser's `app.css`/`app.js` requests 404'd and the page had no style and no behaviour."""
+    import re
+
     page = client.get("/").text
     assert "<title>ACIS" in page
-    for asset in ("app.css", "app.js"):
-        assert client.get(f"/ui/{asset}").status_code == 200
-    assert "http://" not in page and "https://" not in page
-    assert "//cdn" not in client.get("/ui/app.js").text
+    assets = re.findall(r'(?:href|src)="([^"]+)"', page)
+    assert {"app.css", "app.js", "favicon.svg"} <= set(assets)
+    for asset in assets:
+        assert not asset.startswith(("http:", "https:", "//")), asset
+        assert client.get("/" + asset).status_code == 200, asset
+    assert client.get("/favicon.ico").status_code == 200
+    for asset in ("app.js", "app.css"):
+        body = client.get("/" + asset).text
+        assert "http://" not in body and "https://" not in body and "//cdn" not in body, asset
+    assert client.get("/../pyproject.toml").status_code == 404
+    assert client.get("/healthz").json()["status"] == "ok"  # the asset route never shadows the API
 
 
 # -- what `acis serve` starts with ------------------------------------------------------------------------------

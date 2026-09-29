@@ -2,69 +2,114 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ACIS · code retrieval</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="app.css" />
 </head>
 <body>
-<header class="top">
+<header class="topbar">
   <div class="brand">
-    <span class="mark" aria-hidden="true"></span>
+    <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="7" /><path d="M10 21l4-10 4 10M11.5 17.5h5M20 11v10" /></svg>
     <div>
-      <h1>ACIS</h1>
-      <p class="tagline">Agentic Code Intelligence · local, offline, CPU-only</p>
+      <div class="brand-name">ACIS</div>
+      <div class="brand-sub">Agentic Code Intelligence · offline · CPU</div>
     </div>
   </div>
-  <dl class="vitals" id="vitals">
-    <div><dt>encoder</dt><dd id="v-encoder">…</dd></div>
-    <div><dt>profile</dt><dd id="v-profile">…</dd></div>
-    <div><dt>threads</dt><dd id="v-threads">…</dd></div>
-    <div><dt>status</dt><dd id="v-status">…</dd></div>
-  </dl>
+  <div class="status" id="status">
+    <span class="pill" id="pill-encoder">encoder …</span>
+    <span class="pill" id="pill-corpus">corpus …</span>
+    <span class="pill" id="pill-profile">profile …</span>
+  </div>
 </header>
 
+<nav class="tabs" role="tablist">
+  <button class="tab active" data-view="search" role="tab">Search <span class="tab-sub">P0 · APPS corpus</span></button>
+  <button class="tab" data-view="versions" role="tab">Versions <span class="tab-sub">P1 · pinned retrieval</span></button>
+  <button class="tab" data-view="evolution" role="tab">Evolution <span class="tab-sub">Bonus · across all versions</span></button>
+</nav>
+
 <main>
-  <form class="search" id="form" autocomplete="off">
-    <div class="field">
-      <textarea id="q" rows="3" placeholder="Describe the program you are looking for — a full problem statement, a question, or a fragment of code."></textarea>
-      <button type="submit" id="go">Search</button>
-    </div>
-
-    <div class="controls">
-      <fieldset class="segmented" aria-label="retrieval channel">
-        <legend>channel</legend>
-        <label><input type="radio" name="mode" value="auto" checked /><span>auto</span></label>
-        <label><input type="radio" name="mode" value="dense" /><span>dense</span></label>
-        <label><input type="radio" name="mode" value="lexical" /><span>BM25</span></label>
-        <label><input type="radio" name="mode" value="hybrid" /><span>hybrid</span></label>
-      </fieldset>
-
-      <label class="control">repository
-        <select id="repo"><option value="-">APPS corpus (P0)</option></select>
-      </label>
-      <label class="control">version
-        <select id="version"><option value="latest">latest</option></select>
-      </label>
-      <label class="control">results
-        <select id="topk"><option>10</option><option>25</option><option>50</option></select>
-      </label>
-      <label class="control checkbox" id="evolve-wrap" hidden>
-        <input type="checkbox" id="evolve" /> group by lineage <span class="hint">(Bonus)</span>
-      </label>
-    </div>
-  </form>
-
-  <section class="statusbar" id="statusbar" hidden>
-    <div class="timings" id="timings"></div>
-    <div class="badges" id="badges"></div>
+  <!-- P0 -->
+  <section class="view active" id="view-search">
+    <form class="query" id="form-search">
+      <textarea id="q-search" rows="3" placeholder="Describe the code you need — a sentence, or a whole problem statement. Ctrl/⌘+Enter to search."></textarea>
+      <div class="query-bar">
+        <div class="seg" id="channel" role="radiogroup" aria-label="channel">
+          <button type="button" data-value="auto" class="on" title="dense + BM25 candidates, then the learned ranker where it applies">Auto</button>
+          <button type="button" data-value="dense" title="embedding similarity only">Dense</button>
+          <button type="button" data-value="lexical" title="BM25 only">BM25</button>
+          <button type="button" data-value="hybrid" title="dense + BM25 + learned ranker">Hybrid</button>
+        </div>
+        <label class="field">results
+          <select id="topk-search"><option>10</option><option>25</option><option>50</option></select>
+        </label>
+        <button class="primary" type="submit" id="go-search">Search</button>
+      </div>
+    </form>
+    <div class="summary" id="summary-search" hidden></div>
+    <div class="results" id="results-search"></div>
+    <div class="empty" id="empty-search">Type a query and press <b>Search</b>. Every result is re-read from the content store by hash — nothing is generated.</div>
   </section>
 
-  <section id="results" class="results" aria-live="polite"></section>
-  <p class="empty" id="empty">Ask anything. Every result below is read back out of the content store by its hash — nothing is generated.</p>
+  <!-- P1 -->
+  <section class="view" id="view-versions">
+    <div class="split">
+      <div class="main-col">
+        <form class="query" id="form-versions">
+          <textarea id="q-versions" rows="2" placeholder="Search one pinned version of a repository."></textarea>
+          <div class="query-bar">
+            <label class="field">repository <select id="repo-versions"></select></label>
+            <label class="field">version <select id="version-versions"></select></label>
+            <label class="field grow">or selector <input id="selector-versions" placeholder="e.g. snapshot:s_…  as_of:…" /></label>
+            <button class="primary" type="submit">Search</button>
+          </div>
+        </form>
+        <div class="summary" id="summary-versions" hidden></div>
+        <div class="results" id="results-versions"></div>
+        <div class="empty" id="empty-versions">Pick a repository and a version: results come only from that version (INV-2).</div>
+      </div>
+      <aside class="side-col">
+        <div class="card">
+          <h3>Versions</h3>
+          <table class="vtable"><thead><tr><th>label</th><th>units</th><th>snapshot</th><th></th></tr></thead><tbody id="vtable"></tbody></table>
+          <div class="row-actions"><button id="rollback" class="ghost">Roll back</button></div>
+        </div>
+        <div class="card">
+          <h3>Simulate a commit</h3>
+          <p class="muted">Edits units of the latest version (rename, constant, branch, comment…) and builds the next version. Only changed units are embedded.</p>
+          <div class="row-actions">
+            <label class="field">units <input id="commit-edits" type="number" min="1" max="50" value="3" /></label>
+            <button id="commit" class="primary">Commit</button>
+          </div>
+          <div id="commit-result" class="commit-result" hidden></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- Bonus -->
+  <section class="view" id="view-evolution">
+    <form class="query" id="form-evolution">
+      <textarea id="q-evolution" rows="2" placeholder="Search every version at once."></textarea>
+      <div class="query-bar">
+        <label class="field">repository <select id="repo-evolution"></select></label>
+        <div class="seg" id="evo-mode" role="radiogroup" aria-label="view">
+          <button type="button" data-value="grouped" class="on" title="one answer per lineage">Grouped by lineage</button>
+          <button type="button" data-value="flat" title="every matching revision, duplicates included">Flat · all versions</button>
+        </div>
+        <button class="primary" type="submit">Search</button>
+      </div>
+    </form>
+    <div class="summary" id="summary-evolution" hidden></div>
+    <div class="results" id="results-evolution"></div>
+    <div class="empty" id="empty-evolution">Grouped: each unit once, at its best revision, with its history. Flat: every revision that matched — compare the duplicate rate.</div>
+  </section>
 </main>
 
-<footer>
-  <span id="footnote">Exact search over the whole corpus · rank-derived scores · no network at query time</span>
+<footer class="footer">
+  <span id="latency">no queries yet</span>
+  <span class="muted">all computation local · no network</span>
 </footer>
 
 <script src="app.js"></script>
