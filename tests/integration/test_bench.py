@@ -30,7 +30,9 @@ def report(tmp_path_factory):
             sys.executable,
             "scripts/bench/run.py",
             "--queries",
-            "3",
+            "4",
+            "--pause",
+            "0",
             "--no-ledger",
             "--config",
             "configs/dev-standin.yaml",
@@ -49,10 +51,12 @@ def report(tmp_path_factory):
 
 def test_it_measures_the_model_and_the_core_separately(report):
     payload, _ = report
-    for name in ("encode_query", "search_cold_query", "search_warm"):
+    for name in ("short_cold", "short_warm", "long_cold", "long_warm", "short_cold_4_concurrent"):
         assert payload["latency_ms"][name]["p95"] > 0.0
     # The core alone cannot be slower than the query that had to be encoded first.
-    assert payload["latency_ms"]["search_warm"]["p95"] <= payload["latency_ms"]["search_cold_query"]["p95"] * 2
+    assert payload["latency_ms"]["long_warm"]["p95"] <= payload["latency_ms"]["long_cold"]["p95"] * 2
+    # Stages are reported per workload, and the queueing for the model is its own stage, never hidden in encode.
+    assert "route" in payload["stage_ms"]["short_cold"]
 
 
 def test_it_records_what_the_numbers_describe(report):
@@ -65,4 +69,4 @@ def test_it_records_what_the_numbers_describe(report):
 
 def test_it_prints_the_targets_it_checked(report):
     _, stdout = report
-    assert "search_warm" in stdout and "target" in stdout
+    assert "short_warm search" in stdout and "target" in stdout

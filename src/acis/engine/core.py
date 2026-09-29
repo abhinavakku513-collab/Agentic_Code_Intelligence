@@ -517,24 +517,21 @@ class AcisEngine(VersionedEngineMixin):
             key=lambda item: (-item[1], data.hash_of.get(item[0], item[0]), data.ordinal.get(item[0], 1 << 30)),
         )
 
-    def _hybrid_ranking(
+    def candidate_pool(
         self,
         data: SnapshotData,
         query: str,
         *,
         route: str,
         want: int,
-        counters: Counters,
-        strict: bool,
-    ) -> list[tuple[str, float]]:
-        """Dense ∪ lexical → features → ranker → dense tail (spec 02 §4 stages 3–9).
+        counters: Counters | None = None,
+        strict: bool = False,
+    ) -> tuple[list[tuple[str, float]], list[Any]]:
+        """Stages 3–6 of spec 02 §4: the dense prefix and the candidate union, exactly as serving builds them.
 
-        The fallback chain is explicit and counted (INV-7): a trained ranker if one is loaded and its evidence
-        fired, reciprocal-rank fusion otherwise, and the dense order if the lexical channel is missing entirely.
-        Every step down increments a counter and appears in `degradations`, and strict mode refuses all of them.
+        Public so the offline tuning of the generic fusion reads the same pools the engine ranks — one code path,
+        not a re-implementation that could drift from it.
         """
-        from acis.features.query import bridge as bridge_features  # noqa: PLC0415
-        from acis.features.query import extract as query_features  # noqa: PLC0415
         from acis.rank import candidates as cand  # noqa: PLC0415
 
         retrieve = self.config.section("retrieve")
@@ -550,51 +547,115 @@ class AcisEngine(VersionedEngineMixin):
         if data.lexical is not None and "lexical" not in data.missing:
             lexical_order = self._lexical_ranking(data, query, lexical_k)
         else:
-            degradation("lexical_unavailable", "dense-only fusion", strict=strict, counters=counters)
+            degradation(
+                "lexical_unavailable", "dense-only fusion", strict=strict, counters=counters or self.counters
+            )
 
         pool = cand.union(dense_order, lexical_order, dense_k=dense_k, lexical_k=lexical_k, cap=union_cap)
+        return dense_order, pool
+
+    @property
+    def generic_alpha(self) -> float | None:
+        """The generic route's fusion weight (`rank.generic.alpha`), or `None` when none has been tuned."""
+        value = self.config.get("rank.generic.alpha", None)
+        return None if value in (None, "") else float(value)
+
+    def fused_order(self, data: SnapshotData, query: str, pool: Sequence[Any], *, route: str) -> list[str]:
+        """Weighted dense + lexical fusion over the pool (spec 02 §4 stage 8, generic route).
+
+        A lexical-only candidate has no cosine yet; it gets its exact one from the snapshot's matrix (one dot
+        product each), so both channels are compared on the same documents. Ties fall to the content hash (INV-4).
+        """
+        from dataclasses import replace as _replace  # noqa: PLC0415
+
+        from acis.rank.fusion import weighted_fusion  # noqa: PLC0415
+
+        alpha = self.generic_alpha
+        assert alpha is not None
+        missing = [c for c in pool if c.dense_score != c.dense_score]
+        if missing and data.vectors is not None:
+            vector = self._query_vector(data.snapshot.snapshot_id, query, route=route)
+            index = {doc_id: i for i, doc_id in enumerate(data.doc_ids)}
+            rows = data.vectors[[index[c.doc_id] for c in missing]]
+            filled = {c.doc_id: float(s) for c, s in zip(missing, rows @ vector, strict=True)}
+            pool = [_replace(c, dense_score=filled[c.doc_id]) if c.doc_id in filled else c for c in pool]
+        with stage("fusion"):
+            fused = weighted_fusion(pool, alpha=alpha)
+            return [doc for doc, _ in self._stable_order(data, list(fused.items()))]
+
+    def _hybrid_ranking(
+        self,
+        data: SnapshotData,
+        query: str,
+        *,
+        route: str,
+        want: int,
+        counters: Counters,
+        strict: bool,
+    ) -> list[tuple[str, float]]:
+        """Dense ∪ lexical → features → ranker (statements) or weighted fusion (everything else) → dense tail.
+
+        The fallback chain is explicit and counted (INV-7): with no ranker loaded, weighted fusion if it has been
+        tuned and the dense order otherwise (spec 02 §4 stage 8). Every step down increments a counter and appears
+        in `degradations`, and strict mode refuses all of them.
+        """
+        from acis.features.query import bridge as bridge_features  # noqa: PLC0415
+        from acis.features.query import extract as query_features  # noqa: PLC0415
+        from acis.rank import candidates as cand  # noqa: PLC0415
+
+        dense_order, pool = self.candidate_pool(
+            data, query, route=route, want=want, counters=counters, strict=strict
+        )
         if not pool:
             return dense_order[:want]
-        pool = self._with_prf(data, query, route=route, pool=pool)
-
-        with stage("features"):
-            qf = query_features(query)
-            bridge = {c.doc_id: bridge_features(qf, data.features_of(c.doc_id)) for c in pool}
-            doc_meta = {
-                c.doc_id: {
-                    "n_tokens": data.features_of(c.doc_id).n_tokens,
-                    "parse_ok": data.features_of(c.doc_id).parse_ok,
-                    "dup_cluster_size": data.duplicate_count(c.doc_id),
-                }
-                for c in pool
-            }
-            matrix = cand.feature_matrix(pool, bridge=bridge, query_tokens=qf.n_tokens, doc_meta=doc_meta)
-        doc_ids = [c.doc_id for c in pool]
 
         ranker = self.ranker
         head: list[str]
-        if ranker is not None and route != "statement_like":
-            # R-Q2 (spec 10 §2): the learned ranker is trained on problem statements, and on a short hands-on
-            # question it is measurably worse than the frozen dense order. The route is what keeps it off them.
-            #
-            # Counted, but **not** a degradation: this is the specified behaviour for a non-statement query, not
-            # a fallback from something better. Calling it one would make strict mode refuse a correct ranking
-            # and would put a fallback in the submission manifest that never happened.
-            counters.incr(f"route.{route}.ltr_skipped")
-            head = []  # the frozen dense order, exactly
+        if route != "statement_like":
+            # R-Q2 (spec 10 §2): the learned ranker is trained on problem statements; on anything else it is
+            # measurably worse than the frozen dense order, so the generic route is ranked by weighted fusion of the
+            # two channels that already ran. Counted, and **not** a degradation: it is the specified ranking for a
+            # non-statement query, not a fallback from something better.
+            if ranker is not None:
+                counters.incr(f"route.{route}.ltr_skipped")
+            if self.generic_alpha is not None:
+                counters.incr("fusion.applied")
+                head = self.fused_order(data, query, pool, route=route)
+            else:
+                # The specified ranking for this route is missing, so the dense order serves it: a fallback,
+                # counted and refused by strict mode like every other (INV-7).
+                counters.incr("fusion.untuned")
+                degradation("fusion_untuned", "dense order", strict=strict, counters=counters)
+                head = []
         elif ranker is not None:
+            pool = self._with_prf(data, query, route=route, pool=pool)
+            with stage("features"):
+                qf = query_features(query)
+                bridge = {c.doc_id: bridge_features(qf, data.features_of(c.doc_id)) for c in pool}
+                doc_meta = {
+                    c.doc_id: {
+                        "n_tokens": data.features_of(c.doc_id).n_tokens,
+                        "parse_ok": data.features_of(c.doc_id).parse_ok,
+                        "dup_cluster_size": data.duplicate_count(c.doc_id),
+                    }
+                    for c in pool
+                }
+                matrix = cand.feature_matrix(pool, bridge=bridge, query_tokens=qf.n_tokens, doc_meta=doc_meta)
             with stage("ranker"):
-                head, abstained = ranker.rerank(doc_ids, matrix)
+                head, abstained = ranker.rerank([c.doc_id for c in pool], matrix)
             if abstained:
-                # Thin evidence: the ranker's contract is "the dense order stands". Not reciprocal-rank fusion (G2
-                # measured it harmful here), and not a fallback: abstaining is the designed behaviour, counted.
+                # Thin evidence: the ranker's contract is "the dense order stands". Not fusion (G2 measured
+                # rank fusion harmful on statements), and not a fallback: abstaining is the designed behaviour.
                 counters.incr("ltr.abstained")
                 head = []
             else:
                 counters.incr("ltr.applied")
+        elif self.generic_alpha is not None:
+            degradation("ltr_unavailable", "weighted fusion", strict=strict, counters=counters)
+            head = self.fused_order(data, query, pool, route=route)
         else:
-            degradation("ltr_unavailable", "reciprocal-rank fusion", strict=strict, counters=counters)
-            head = self._rrf_order(pool)
+            degradation("ltr_unavailable", "dense order", strict=strict, counters=counters)
+            head = []
 
         # The head is re-scored by position, then the dense tail follows it to `want` (spec 02 §4 stage 9). The
         # tail's own order is the dense one, which is why it is taken from `dense_order` rather than recomputed.
@@ -866,19 +927,27 @@ class AcisEngine(VersionedEngineMixin):
         channel = requested if requested != "auto" else str(self.config.get("run.channel", "auto"))
         seen = counters.snapshot()
         if channel == "hybrid":
+            alpha = self.generic_alpha
             if seen.get("ltr.applied"):
                 ordered_by = "learned ranker over dense + BM25 candidates"
             elif seen.get("ltr.abstained"):
                 ordered_by = "dense (the ranker abstained: too little evidence fired)"
-            elif any(k.endswith("ltr_skipped") for k in seen):
-                ordered_by = "dense (routed: not statement-like, the ranker stays off)"
+            elif seen.get("fusion.applied"):
+                ordered_by = f"weighted fusion of dense + BM25 (α = {alpha:g}; generic route, the ranker stays off)"
+            elif seen.get("fusion.untuned"):
+                ordered_by = "dense (generic route; no fusion weight has been tuned)"
             else:
-                ordered_by = "reciprocal-rank fusion (no ranker loaded)"
+                ordered_by = "dense (no ranker loaded)"
         elif channel == "lexical":
             ordered_by = "BM25"
         else:
             ordered_by = "dense"
-        return {"channel": channel, "ordered_by": ordered_by, "encoder": getattr(self.encoder, "name", "none")}
+        return {
+            "channel": channel,
+            "ordered_by": ordered_by,
+            "encoder": getattr(self.encoder, "name", "none"),
+            "generic_alpha": self.generic_alpha,
+        }
 
     def _resolve_snapshot(self, req: SearchRequest) -> SnapshotData:
         """Resolve the request's version **once**, and pin it for the whole request (INV-2).

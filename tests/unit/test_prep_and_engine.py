@@ -231,10 +231,12 @@ def test_unknown_version_raises_not_found(engine):
 
 
 def test_hybrid_mode_fuses_both_channels_and_says_what_it_fell_back_to(tiny_corpus):
-    """Phase 4: fusion exists, and without a trained ranker it is reciprocal-rank fusion — counted, not silent.
+    """Without a trained ranker or a tuned fusion weight, the hybrid channel serves the dense order — counted,
+    never silent.
 
-    The fallback chain is the point (INV-7): no ranker is a *degradation*, not a quiet identity, so a run
-    manifest says whether the learned ranker actually served the query.
+    The fallback chain is the point (INV-7): a missing ranking stage is a *degradation*, not a quiet identity, so a
+    run manifest says whether the specified ranking actually served the query. No bank here, so the query takes the
+    generic route, whose specified ranking is the weighted fusion.
     """
     cfg = freeze_config({**DEFAULT_CONFIG, "run": {**DEFAULT_CONFIG["run"], "channel": "hybrid"}})
     eng = AcisEngine.from_config(cfg, encoder=HashingEncoder())
@@ -243,7 +245,7 @@ def test_hybrid_mode_fuses_both_channels_and_says_what_it_fell_back_to(tiny_corp
     hits = eng.search_batch(snap, ["q"], ["gcd while loop"], top_k=3)["q"]
     assert len(hits) == 3
     assert [d for d, _ in hits] == sorted({d for d, _ in hits}, key=[d for d, _ in hits].index)
-    assert eng.counters.get("degradation.ltr_unavailable") >= 1
+    assert eng.counters.get("degradation.fusion_untuned") >= 1
 
 
 def test_hybrid_mode_refuses_to_degrade_silently_in_a_strict_run(tiny_corpus):
