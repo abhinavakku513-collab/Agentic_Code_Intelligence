@@ -63,18 +63,25 @@ class Lineage:
     def timeline(self) -> list[dict[str, Any]]:
         """Change points, oldest first: what happened to this unit and how confident we are that it happened."""
         out: list[dict[str, Any]] = []
+        first_seen: dict[str, str] = {}
         for index, member in enumerate(self.members):
             previous = self.members[index - 1] if index else None
-            out.append(
-                {
-                    "version": member.version,
-                    "key": member.key,
-                    "relation": member.relation,
-                    "confidence": round(member.confidence, 4),
-                    "inferred": member.inferred,
-                    "changed": previous is None or previous.body_hash != member.body_hash,
-                }
-            )
+            changed = previous is None or previous.body_hash != member.body_hash
+            step: dict[str, Any] = {
+                "version": member.version,
+                "key": member.key,
+                "relation": member.relation,
+                "confidence": round(member.confidence, 4),
+                "inferred": member.inferred,
+                "changed": changed,
+                "body_hash": member.body_hash,
+            }
+            # A change back to content this unit already had — a revert — is a fact of the content, not a guess:
+            # the bytes are identical to an earlier revision's, so say which one.
+            if changed and previous is not None and member.body_hash in first_seen:
+                step["same_content_as"] = first_seen[member.body_hash]
+            first_seen.setdefault(member.body_hash, member.version)
+            out.append(step)
         return out
 
 
