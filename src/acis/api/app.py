@@ -39,6 +39,8 @@ from acis.obs.log import get_logger
 log = get_logger("acis.api")
 
 STATIC_DIR = Path(__file__).parent / "static"
+#: Capabilities the page relies on; bumped with the page, so a stale server process is detected, not guessed at.
+API_FEATURES = ("repo_identity", "benchmarks_p0", "calibrated_confidence")
 TOKEN_ENV = "ACIS_API_TOKEN"
 #: `docs/spec/06` §1 assigns each error its status code; the API only translates.
 STATUS = {
@@ -335,6 +337,9 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
             "numeric_profile": engine.config.numeric_profile,
             "threads": engine.threads,
             "repos": names,
+            # What this *process* serves. The page is read from disk on every request, so a server started before
+            # an upgrade hands new page code to an old API; the page checks this list and says so.
+            "api_features": list(API_FEATURES),
         }
 
     @app.get("/readyz")
@@ -424,6 +429,8 @@ def preload_p0(engine: Any) -> str | None:
     snapshot = engine.build_snapshot(apps.load_corpus(), source="serve:p0")
     # Parse-only features for every document up front, so the first queries do not pay for it one by one.
     features = engine.snapshot_data(snapshot).warm_features()
+    # Everything the first query would otherwise load lazily: the routing bank, the ranker, the calibration.
+    _ = (engine.query_bank, engine.ranker, engine.calibration)
     log.info("api.p0_features", documents=features, seconds=round(time.perf_counter() - started, 1))
     log.info(
         "api.p0_ready",

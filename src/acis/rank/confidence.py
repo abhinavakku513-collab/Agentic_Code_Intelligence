@@ -49,8 +49,35 @@ def z_top1(top_cosines: Sequence[float] | np.ndarray, served_top1_cosine: float)
     return (float(served_top1_cosine) - float(values.mean())) / sd
 
 
-def isotonic(xs: Sequence[float], ys: Sequence[float]) -> tuple[list[float], list[float]]:
-    """Pool-adjacent-violators: a non-decreasing step function of x. Returns (knots, values) for `lookup`."""
+#: A block of the step function must rest on at least this many queries: without it the extremes are a handful of
+#: queries that happened to be right (or wrong) and read as certainties — P = 1.00 from 3 lucky CosQA queries.
+MIN_BLOCK = 25
+
+
+def isotonic(
+    xs: Sequence[float], ys: Sequence[float], *, min_block: int = MIN_BLOCK
+) -> tuple[list[float], list[float]]:
+    """A non-decreasing step function of x: pool-adjacent-violators, then blocks merged until each holds at least
+    `min_block` points, each reported as a Laplace-smoothed rate `(hits + 1) / (n + 2)` — never exactly 0 or 1.
+    Returns (knots, values) for `lookup`."""
+    knots, sums, counts = _pav(xs, ys)
+    while len(counts) > 1 and min(counts) < min_block:
+        i = counts.index(min(counts))
+        j = i + 1 if i == 0 else i - 1 if i == len(counts) - 1 else (i - 1 if counts[i - 1] <= counts[i + 1] else i + 1)
+        lo, hi = min(i, j), max(i, j)
+        sums[lo : hi + 1] = [sums[lo] + sums[hi]]
+        counts[lo : hi + 1] = [counts[lo] + counts[hi]]
+        knots[lo : hi + 1] = [knots[hi]]
+    smoothed = [(s + 1.0) / (c + 2.0) for s, c in zip(sums, counts, strict=True)]
+    # Smoothing depends on block size, so equal raw rates can come out decreasing (0/30 -> .031, 0/100 -> .010);
+    # a running maximum restores the monotone shape without ever reaching 0 or 1.
+    for i in range(1, len(smoothed)):
+        smoothed[i] = max(smoothed[i], smoothed[i - 1])
+    return knots, smoothed
+
+
+def _pav(xs: Sequence[float], ys: Sequence[float]) -> tuple[list[float], list[float], list[float]]:
+    """Pool-adjacent-violators: (upper knot, sum of y, count) per block, non-decreasing in mean."""
     pairs = sorted((float(x), float(y)) for x, y in zip(xs, ys, strict=True) if math.isfinite(x))
     blocks: list[list[float]] = []  # [sum_y, count, max_x]
     for x, y in pairs:
@@ -60,7 +87,7 @@ def isotonic(xs: Sequence[float], ys: Sequence[float]) -> tuple[list[float], lis
             blocks[-1][0] += s
             blocks[-1][1] += c
             blocks[-1][2] = mx
-    return [b[2] for b in blocks], [b[0] / b[1] for b in blocks]
+    return [b[2] for b in blocks], [b[0] for b in blocks], [b[1] for b in blocks]
 
 
 def lookup(knots: Sequence[float], values: Sequence[float], x: float) -> float:
@@ -99,4 +126,4 @@ class Calibration:
         return str(fit.get("fitted_on", "unknown"))
 
 
-__all__ = ["CROWD", "HIGH", "MEDIUM", "Calibration", "band", "isotonic", "lookup", "z_top1"]
+__all__ = ["CROWD", "HIGH", "MEDIUM", "MIN_BLOCK", "Calibration", "band", "isotonic", "lookup", "z_top1"]

@@ -148,4 +148,3 @@ class CommitBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     edits: int = Field(default=3, ge=1, le=50)
     seed: int = Field(default=0, ge=0)
-

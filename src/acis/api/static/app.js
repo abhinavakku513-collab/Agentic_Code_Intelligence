@@ -75,7 +75,7 @@ function notice(target, kind, html) {
   if (!html) { el.hidden = true; el.innerHTML = ""; return; }
   el.hidden = false; el.className = `notice ${kind}`; el.innerHTML = html;
 }
-const fmtInt = (n) => Number(n).toLocaleString();
+const fmtInt = (n) => (Number.isFinite(Number(n)) && n !== null && n !== undefined ? Number(n).toLocaleString() : "unknown");
 
 /* -- custom dropdown ----------------------------------------------------------------------------------------
  * A button and a listbox, in place of the native <select>: styled like everything else, keyboard-operable
@@ -492,6 +492,11 @@ async function init() {
   dropdown("version-versions", { options: [] });
   try {
     const [health, ready] = await Promise.all([api("/healthz"), api("/readyz")]);
+    const needed = ["repo_identity", "benchmarks_p0", "calibrated_confidence"];
+    const missing = needed.filter((f) => !(health.api_features || []).includes(f));
+    if (missing.length) {
+      document.querySelector("main").insertAdjacentHTML("afterbegin", `<div class="notice bad"><b>This server process is older than this page.</b> It was started before an upgrade and lacks: ${missing.map(escapeHtml).join(", ")}. Restart <code>acis serve</code>; until then some panels cannot show real values.</div>`);
+    }
     $("pill-encoder").textContent = health.encoder;
     $("pill-encoder").classList.toggle("ok", !!health.submission_capable);
     $("pill-encoder").classList.toggle("warn", !health.submission_capable);
