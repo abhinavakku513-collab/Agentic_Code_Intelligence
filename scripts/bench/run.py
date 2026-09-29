@@ -20,8 +20,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
+import string
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +38,9 @@ from acis.engine import AcisEngine
 from acis.eval import ledger
 
 #: spec 02 §7, all [E] until measured on the declared host. `None` means "measured, not yet targeted".
-TARGETS_MS = {"search_warm": 15.0, "encode_query": 150.0}
+TARGETS_MS = {"short_warm": 15.0, "long_warm": 15.0}
+#: Encode targets, checked on the encode stage of cold queries (spec 02 §7).
+ENCODE_TARGETS_MS = {"short_cold": 150.0, "long_cold": 1500.0}
 
 
 def _timed(fn: Any, repeats: int) -> list[float]:
@@ -47,28 +52,91 @@ def _timed(fn: Any, repeats: int) -> list[float]:
     return samples
 
 
-def measure(config_path: str, *, n_queries: int, top_k: int) -> dict[str, Any]:
+#: Short hands-on questions, written for latency only: nothing is tuned to them and their rankings are not scored.
+SHORT_QUERIES = (
+    "find the shortest path in a weighted graph",
+    "reverse a linked list",
+    "count inversions in an array",
+    "binary search on a sorted list",
+    "longest common subsequence of two strings",
+    "check whether a number is prime",
+    "minimum spanning tree of a graph",
+    "sum of digits of a large number",
+)
+
+
+def _fresh(text: str, rng: random.Random) -> str:
+    """The same query with a letters-only nonce, so neither the process nor the on-disk vector cache has seen it.
+
+    Letters only: a digit would add a numeric literal and could change the route, i.e. the work being timed.
+    """
+    return f"{text} {''.join(rng.choice(string.ascii_lowercase) for _ in range(8))}"
+
+
+def _search_ms(engine: AcisEngine, text: str, top_k: int) -> tuple[float, dict[str, float]]:
+    started = time.perf_counter()
+    response = engine.search(SearchRequest(query=text, top_k=top_k))
+    return (time.perf_counter() - started) * 1000, dict(response.timings_ms)
+
+
+def measure(config_path: str, *, n_queries: int, top_k: int, pause: float = 0.5) -> dict[str, Any]:
+    """Cold and warm, short and long, one at a time and four at once.
+
+    * **cold** — text neither the process nor the on-disk vector cache has seen: what a judge typing a new question
+      waits for (model included).
+    * **warm** — the same text again: the query vector is cached, so this is the retrieval core.
+    * **paced** — a pause between queries, as a person types. Back-to-back loops overstate the encoder: numpy's
+      BLAS threads keep spinning after the dense matmul and slow the next forward pass (~+70 ms measured).
+    * **concurrent** — four requests at once, which the API allows; the encoder serialises them and the queueing
+      is reported as its own stage (`encode_wait`).
+    """
     config = load_frozen_config(config_path)
     encoder = build_encoder(config)
     engine = AcisEngine.from_config(config, encoder=encoder)
 
-    corpus = apps.load_corpus()
     started = time.perf_counter()
-    snapshot = engine.build_snapshot(corpus, source="bench")
+    snapshot = engine.build_snapshot(apps.load_corpus(), source="bench")
+    engine.snapshot_data(snapshot).warm_features()
     build_seconds = time.perf_counter() - started
 
-    queries = list(apps.load_queries().values())[:n_queries]
-    for text in queries[:3]:  # warm the interpreter, the BLAS threads and the allocator, not the caches
-        engine.search(SearchRequest(query=text, top_k=top_k))
+    rng = random.Random(0)  # which dev queries are sampled: fixed
+    nonce = random.Random()  # the nonces: fresh every run, or a second run would hit the first one's cache
+    dev = apps.load_queries()
+    ids = sorted(dev)
+    long_texts = [dev[q] for q in rng.sample(ids, n_queries)]
+    short_texts = [SHORT_QUERIES[i % len(SHORT_QUERIES)] for i in range(n_queries)]
+    for text in ("warm-up query one", "warm-up query two"):  # interpreter, allocator, thread pools — not caches
+        _search_ms(engine, _fresh(text, nonce), top_k)
 
-    encode_samples: list[float] = []
-    cold_samples: list[float] = []
-    warm_samples: list[float] = []
-    for text in queries:
-        encode_samples += _timed(lambda t=text: encoder.encode([t], is_query=True), 1)
-        engine._query_vector_cache.clear()
-        cold_samples += _timed(lambda t=text: engine.search(SearchRequest(query=t, top_k=top_k)), 1)
-        warm_samples += _timed(lambda t=text: engine.search(SearchRequest(query=t, top_k=top_k)), 1)
+    samples: dict[str, list[float]] = {}
+    stage_samples: dict[str, dict[str, list[float]]] = {}
+    routes: dict[str, dict[str, int]] = {}
+
+    def record(name: str, ms: float, timings: dict[str, float]) -> None:
+        samples.setdefault(name, []).append(ms / 1000)
+        for key, value in timings.items():
+            if key.startswith("stage."):
+                stage_samples.setdefault(name, {}).setdefault(key[6:], []).append(value / 1000)
+
+    for kind, texts in (("short", short_texts), ("long", long_texts)):
+        for text in texts:
+            fresh = _fresh(text, nonce)
+            time.sleep(pause)
+            ms, timings = _search_ms(engine, fresh, top_k)
+            record(f"{kind}_cold", ms, timings)
+            route = engine.route(engine.normalise_query(fresh)[0])
+            routes.setdefault(kind, {}).setdefault(route, 0)
+            routes[kind][route] += 1
+            time.sleep(pause)
+            ms, timings = _search_ms(engine, fresh, top_k)
+            record(f"{kind}_warm", ms, timings)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        for i in range(0, n_queries, 4):
+            time.sleep(pause)
+            batch = [_fresh(short_texts[(i + j) % len(short_texts)], nonce) for j in range(4)]
+            for ms, timings in pool.map(lambda t: _search_ms(engine, t, top_k), batch):
+                record("short_cold_4_concurrent", ms, timings)
 
     return {
         "config": config_path,
@@ -77,15 +145,18 @@ def measure(config_path: str, *, n_queries: int, top_k: int) -> dict[str, Any]:
         "submission_capable": encoder.submission_capable,
         "numeric_profile": config.numeric_profile,
         "threads": engine.threads,
+        "blas_threads": engine.blas_threads,  # None = the process default (16 on the dev host)
         "n_units": snapshot.n_units,
-        "n_queries": len(queries),
+        "n_queries": n_queries,
         "top_k": top_k,
+        "pause_s": pause,
+        "routes": routes,
         "snapshot_build_seconds": round(build_seconds, 3),
         "peak_rss_mb": round(peak_rss_mb(), 2),
-        "latency_ms": {
-            "encode_query": percentiles(encode_samples),
-            "search_cold_query": percentiles(cold_samples),
-            "search_warm": percentiles(warm_samples),
+        "latency_ms": {name: percentiles(values) for name, values in samples.items()},
+        "stage_ms": {
+            name: {stage: percentiles(values) for stage, values in stages.items()}
+            for name, stages in stage_samples.items()
         },
     }
 
@@ -98,24 +169,52 @@ def check_targets(report: dict[str, Any]) -> list[str]:
         if measured is None:
             continue
         verdict = "ok" if measured <= target else "OVER"
-        lines.append(f"{name:<18} p95 {measured:8.2f} ms   target {target:>6.1f} ms   {verdict}")
+        lines.append(f"{name + ' search':<26} p95 {measured:8.2f} ms   target {target:>7.1f} ms   {verdict}")
+    for name, target in ENCODE_TARGETS_MS.items():
+        stages = report["stage_ms"].get(name, {})
+        encode = [stages[s]["p95"] for s in ("route_encode", "encode") if s in stages and stages[s]]
+        if not encode:
+            continue
+        measured = max(encode)
+        verdict = "ok" if measured <= target else "OVER"
+        lines.append(f"{name + ' encode':<26} p95 {measured:8.2f} ms   target {target:>7.1f} ms   {verdict}")
+    lines.append("")
+    for name, values in report["latency_ms"].items():
+        lines.append(f"{name:<26} p50 {values['p50']:8.1f} ms   p95 {values['p95']:8.1f} ms")
     return lines
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="latency and memory benchmarks (docs/spec/02 §7)")
     parser.add_argument("--config", default="configs/dev.yaml")
-    parser.add_argument("--queries", type=int, default=50)
+    parser.add_argument("--queries", type=int, default=24)
+    parser.add_argument("--pause", type=float, default=0.5, help="seconds between queries, as a person types")
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--out", default="runs/bench.json")
     parser.add_argument("--no-ledger", action="store_true", help="measure without recording (a scratch run)")
+    parser.add_argument(
+        "--without-forward-lock",
+        action="store_true",
+        help="the pre-fix behaviour (concurrent forward passes), for a before/after comparison only",
+    )
     args = parser.parse_args(argv)
+    if args.without_forward_lock:
+        from acis.embed import runtime
+
+        class _NoLock:
+            def acquire(self) -> bool:
+                return True
+
+            def release(self) -> None:
+                return None
+
+        runtime._FORWARD_LOCK = _NoLock()  # type: ignore[assignment]
 
     if not apps.is_available():
         print("bench: dataset assets are missing — run `make fetch` first", file=sys.stderr)
         return 2
 
-    report = measure(args.config, n_queries=args.queries, top_k=args.top_k)
+    report = measure(args.config, n_queries=args.queries, top_k=args.top_k, pause=args.pause)
 
     run_id = ""
     if not args.no_ledger:
@@ -128,7 +227,9 @@ def main(argv: list[str] | None = None) -> int:
                     if values
                 }
             )
-            .with_fields(rung="bench", dataset="dev", decision_set="n/a", **report)
+            .with_fields(
+                rung="bench", dataset="dev", decision_set="n/a", forward_lock=not args.without_forward_lock, **report
+            )
             .build()
         )
         run_id = ledger.append(row).run_id

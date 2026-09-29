@@ -21,9 +21,7 @@ from __future__ import annotations
 
 import heapq
 import time
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
-from contextvars import ContextVar
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -33,7 +31,7 @@ import numpy as np
 from acis.core.config import FrozenConfig, freeze_config
 from acis.core.errors import InvalidInput, NotFound, NotReady, SnapshotInvalid
 from acis.core.hashing import hash_obj, sha256_text, short
-from acis.core.numeric import resolve_threads
+from acis.core.numeric import apply_blas_threads, resolve_threads
 from acis.core.types import (
     BuildReport,
     Confidence,
@@ -54,6 +52,7 @@ from acis.engine.versions import VersionedEngineMixin
 from acis.lexical.bm25 import Bm25Index
 from acis.lexical.tokenize import corpus_text
 from acis.obs.counters import Counters, degradation
+from acis.obs.timing import STAGES, stage
 from acis.prep.normalize import d1, is_empty_query, lexical_view, q1
 from acis.prep.truncate import head_tail
 from acis.prep.views import build_view, weak_marker_count
@@ -141,22 +140,8 @@ DEFAULT_CONFIG: dict[str, object] = {
 }
 
 
-#: Per-request stage timings (ms). A ContextVar, so concurrent API requests never mix their clocks.
-_STAGES: ContextVar[dict[str, float] | None] = ContextVar("acis_stages", default=None)
-
-
-@contextmanager
-def stage(name: str) -> Iterator[None]:
-    """Time one pipeline stage into the current request's `timings_ms`; free when no request is timing."""
-    sink = _STAGES.get()
-    if sink is None:
-        yield
-        return
-    started = time.perf_counter()
-    try:
-        yield
-    finally:
-        sink[name] = sink.get(name, 0.0) + (time.perf_counter() - started) * 1000
+#: Per-request stage timings live in `acis.obs.timing` so the encoder can report its own queueing (re-exported).
+_STAGES = STAGES
 
 
 def query_encoder_texts(config: Any, normalised_query: str) -> tuple[str, ...]:
@@ -213,6 +198,8 @@ class AcisEngine(VersionedEngineMixin):
         self.encoder = encoder
         self.counters = Counters()
         self.threads = resolve_threads(config.get("run.threads", "auto_physical"))
+        #: The retrieval core's matrix-vector products are memory-bound: more BLAS threads only add wake-up cost.
+        self.blas_threads = apply_blas_threads(self.threads)
         #: In-memory snapshots built through `build_snapshot` (the P0 path: one corpus, no versions).
         self._snapshots: dict[str, SnapshotData] = {}
         #: Snapshots loaded from the store, keyed by `(repo_id, snapshot_id)` (the P1 path, Track B1).
@@ -407,6 +394,10 @@ class AcisEngine(VersionedEngineMixin):
         computed from the query alone otherwise — a query with no numbers, no quoted output and no structural
         cues gives the ranker nothing, whatever it resembles.
         """
+        with stage("route"):  # exclusive: the query's own encode inside it is timed as `route_encode`
+            return self._route_decision(query, availability=availability)
+
+    def _route_decision(self, query: str, *, availability: float | None) -> Any:
         from acis.engine.routing import DEFAULT_RHO, DEFAULT_TAU, decide  # noqa: PLC0415
         from acis.features.query import BRIDGE_FEATURES  # noqa: PLC0415
         from acis.features.query import extract as query_features

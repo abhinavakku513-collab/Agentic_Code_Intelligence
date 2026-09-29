@@ -72,10 +72,36 @@ def apply_threads(threads: int) -> int:
     return threads
 
 
+#: numpy/scipy BLAS threads for the retrieval core: **one**. A query's dense scores are two matrix-vector products
+#: (8,765 and 5,000 rows): memory-bound, ~5 ms on one thread. On the 16 hyper-threads OpenBLAS starts with, waking
+#: its pool after an idle second cost ~60 ms — more than the work — and its spinning threads slowed the next torch
+#: forward pass by ~70 ms (measured on the dev host, `scripts/bench/run.py`). One thread is also the only count
+#: whose scores do not depend on the host: OpenBLAS splits a product differently per thread count, which moves a
+#: score by up to ~5e-7 and can flip an exact near-tie (INV-6, `tests/metamorphic/test_blas_threads.py`).
+MAX_BLAS_THREADS = 1
+
+
+def apply_blas_threads(threads: int) -> int | None:
+    """Cap numpy/scipy BLAS at `min(threads, MAX_BLAS_THREADS)`. Returns the cap, or `None` if it cannot be set.
+
+    Fails soft: without `threadpoolctl` (a scikit-learn dependency) the process keeps its default pool, which is
+    slower and host-dependent at the ~5e-7 level; the engine records the cap it got in `blas_threads`.
+    """
+    try:
+        from threadpoolctl import threadpool_limits  # noqa: PLC0415
+    except ImportError:
+        return None
+    cap = max(1, min(int(threads), MAX_BLAS_THREADS))
+    threadpool_limits(limits=cap, user_api="blas")
+    return cap
+
+
 __all__ = [
+    "MAX_BLAS_THREADS",
     "PROFILES",
     "REFERENCE_PROFILE",
     "NumericProfile",
+    "apply_blas_threads",
     "apply_threads",
     "get_profile",
     "physical_cores",

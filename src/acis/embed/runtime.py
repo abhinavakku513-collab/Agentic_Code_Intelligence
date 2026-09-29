@@ -21,6 +21,7 @@ when real weights arrive the only untested thing is the model.
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -37,6 +38,7 @@ from acis.embed.cache import VectorCache, vector_key
 from acis.embed.pooling import pool
 from acis.embed.registry import ModelCard, verify_pinned_files
 from acis.obs.log import get_logger
+from acis.obs.timing import stage
 
 log = get_logger("acis.embed")
 
@@ -139,6 +141,13 @@ def _weights_digest(model_dir: Path) -> str:
     )
     return hash_obj({p.name: sha256_file(p) for p in interesting}) if interesting else sha256_text(str(directory))
 
+
+#: One forward pass at a time in this process (spec 02 §3: "one inference process"). Every pass already uses all
+#: physical cores, so two concurrent passes do not finish sooner — they thrash: eight concurrent short queries
+#: took ~1.6 s each against ~0.16 s alone. Serialised, each waits its turn and the wait is reported as its own
+#: stage (`encode_wait`), so a queue is never mistaken for a slow model. It cannot change a vector: each input is
+#: still encoded on its own rows, exactly as before.
+_FORWARD_LOCK = threading.Lock()
 
 @dataclass(slots=True)
 class EncoderRuntime:
@@ -266,14 +275,12 @@ class EncoderRuntime:
             todo = [todo[position] for position in missing]
 
         if todo:
-            lengths = [self._token_length(rendered[i]) for i in todo]
-            for batch in plan_batches(lengths, token_budget=self.token_budget):
-                rows = [todo[i] for i in batch.indices]
-                vectors = self._forward([rendered[i] for i in rows])
-                for row, vector in zip(rows, vectors, strict=True):
-                    out[row] = vector
-                    if self.cache is not None:
-                        self.cache.put(keys[row], vector)
+            with stage("encode_wait"):
+                _FORWARD_LOCK.acquire()
+            try:
+                self._encode_rows(todo, rendered, keys, out)
+            finally:
+                _FORWARD_LOCK.release()
 
         # Fill every row from its representative.
         for index, key in enumerate(keys):
@@ -284,6 +291,18 @@ class EncoderRuntime:
         if missing:
             raise NotReady("the encoder produced no vector for some inputs", n_missing=len(missing))
         return np.stack([v for v in out if v is not None]).astype(np.float32, copy=False)
+
+    def _encode_rows(
+        self, todo: Sequence[int], rendered: Sequence[str], keys: Sequence[str], out: list[np.ndarray | None]
+    ) -> None:
+        lengths = [self._token_length(rendered[i]) for i in todo]
+        for batch in plan_batches(lengths, token_budget=self.token_budget):
+            rows = [todo[i] for i in batch.indices]
+            vectors = self._forward([rendered[i] for i in rows])
+            for row, vector in zip(rows, vectors, strict=True):
+                out[row] = vector
+                if self.cache is not None:
+                    self.cache.put(keys[row], vector)
 
     def _token_length(self, text: str) -> int:
         """Cheap length proxy for batching. Exactness is not needed: it only orders and groups rows."""
