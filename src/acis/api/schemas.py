@@ -58,6 +58,7 @@ class IngestBody(BaseModel):
 class UnitOut(BaseModel):
     unit_id: str
     key: str
+    version: str = "-"
     body_hash: str
     n_bytes: int
 
@@ -86,6 +87,7 @@ class SearchOut(BaseModel):
     timings_ms: dict[str, float]
     degradations: list[str]
     interpreted_intent: dict[str, Any] = Field(default_factory=dict)
+    explanation: dict[str, Any] = Field(default_factory=dict)
 
 
 class EvolveOut(BaseModel):
@@ -135,3 +137,12 @@ __all__ = [
     "UnitOut",
     "VersionOut",
 ]
+
+
+class CommitBody(BaseModel):
+    """A demo commit: `edits` units of the latest version changed by Apps-Evolve's ordinary edit operators."""
+
+    model_config = ConfigDict(extra="forbid")
+    edits: int = Field(default=3, ge=1, le=50)
+    seed: int = Field(default=0, ge=0)
+

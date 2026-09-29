@@ -186,3 +186,20 @@ def test_the_channel_the_user_picks_is_the_channel_that_ranks(client):
     lexical = client.post("/v1/search", json={**query, "mode": "lexical"}).json()["results"]
     dense = client.post("/v1/search", json={**query, "mode": "dense"}).json()["results"]
     assert [h["score"] for h in lexical] != [h["score"] for h in dense]
+
+
+def test_a_demo_commit_becomes_a_searchable_version_and_says_what_it_cost(client):
+    """P1 on the page: a change arrives, is embedded, is searchable — and the page shows how long that took."""
+    before = [v["label"] for v in client.get("/v1/repos/demo/versions").json()["versions"]]
+    out = client.post("/v1/repos/demo/commit", json={"edits": 1, "seed": 3}).json()
+    assert out["version"] not in before and out["units_total"] >= 1
+    assert out["units_new"] + out["units_reused"] == out["units_total"]
+    assert out["seconds_searchable"] >= out["seconds_build"] > 0
+    after = [v["label"] for v in client.get("/v1/repos/demo/versions").json()["versions"]]
+    assert out["version"] in after
+    hits = client.post("/v1/search", json={"query": "solve", "repo_id": "demo", "version": out["version"], "top_k": 3})
+    assert hits.status_code == 200 and hits.json()["results"]
+
+
+def test_a_demo_commit_is_bounded(client):
+    assert client.post("/v1/repos/demo/commit", json={"edits": 5000}).status_code == 422

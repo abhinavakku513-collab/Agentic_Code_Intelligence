@@ -67,6 +67,7 @@ def _hit_out(hit: Hit) -> dict[str, Any]:
         "unit": {
             "unit_id": hit.unit.unit_id,
             "key": hit.unit.key,
+            "version": hit.unit.version_id,
             "body_hash": hit.unit.body_hash,
             "n_bytes": hit.unit.n_bytes,
         },
@@ -150,6 +151,7 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
             "timings_ms": {k: round(float(v), 3) for k, v in response.timings_ms.items()},
             "degradations": list(response.degradations),
             "interpreted_intent": dict(response.interpreted_intent),
+            "explanation": dict(response.explanation),
         }
 
     @app.post("/v1/evolve", response_model=schemas.EvolveOut, dependencies=guard)
@@ -187,6 +189,51 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
             options["rev"] = body.rev
         handle = engine.ingest(SourceSpec(kind=body.kind, location=body.location, options=options), repo_id=repo_id)
         return {"job_id": handle.job_id, "state": handle.state, "detail": handle.detail}
+
+    @app.post("/v1/repos/{repo_id}/commit", dependencies=guard)
+    def commit(repo_id: str, body: schemas.CommitBody) -> dict[str, Any]:
+        """Demo P1: edit `edits` units of the latest version, build it as the next version, time until searchable.
+
+        The edits are Apps-Evolve's ordinary operators (rename, constant, branch, comment, reformat, reorder) on the
+        stored text; the build is the normal P1 path, so only the changed units are embedded.
+        """
+        import random as _random
+
+        from acis.eval import appsevolve as ae
+
+        started = time.perf_counter()
+        latest = engine.open_version(repo_id, "latest")
+        units = {key: latest.text_of(key) for key in latest.doc_ids}
+        rng = _random.Random(body.seed)
+        changed: list[str] = []
+        for key in rng.sample(sorted(units), min(body.edits, len(units))):
+            for _attempt in range(4):  # an operator may not apply to this text; try another
+                edited = getattr(ae, rng.choice(list(ae.EDIT_OPERATORS)))(units[key], rng)
+                if edited != units[key]:
+                    units[key] = edited
+                    changed.append(key)
+                    break
+        labels = {str(v["label"]) for v in engine.versions(repo_id)}
+        n = len(labels) + 1
+        while f"v{n}" in labels:
+            n += 1
+        label = f"v{n}"
+        report = engine.update_version(
+            repo_id, SourceSpec(kind="memory", location=repo_id, options={"versions": {label: units}})
+        )
+        built = time.perf_counter() - started
+        probe = next(iter(units.values()))[:200] or "def"
+        engine.search(SearchRequest(query=probe, repo_id=repo_id, version=label, top_k=1))
+        return {
+            "version": label,
+            "snapshot": report.snapshot.snapshot_id,
+            "changed": sorted(changed),
+            "units_total": report.units_total,
+            "units_new": report.units_new,
+            "units_reused": report.units_reused,
+            "seconds_build": round(built, 3),
+            "seconds_searchable": round(time.perf_counter() - started, 3),
+        }
 
     @app.get("/v1/repos/{repo_id}/versions", dependencies=guard)
     def versions(repo_id: str) -> dict[str, Any]:

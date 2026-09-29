@@ -145,6 +145,8 @@ class SearchResponse:
     timings_ms: Mapping[str, float] = field(default_factory=dict)
     degradations: Sequence[str] = field(default_factory=tuple)
     investigation: Mapping[str, Any] | None = None
+    #: What produced the final order (explain requests): the channel, and the ranker's decision when hybrid.
+    explanation: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

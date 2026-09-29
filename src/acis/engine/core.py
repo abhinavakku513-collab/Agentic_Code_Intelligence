@@ -807,6 +807,7 @@ class AcisEngine(VersionedEngineMixin):
             self.counters.incr(name, count)
         for event in request_counters.degradations():
             self.counters.note(event)
+        signals = self._explain_signals(data, query, route, [d for d, _ in ranked]) if req.explain else {}
         hits = [
             Hit(
                 rank=rank,
@@ -815,10 +816,11 @@ class AcisEngine(VersionedEngineMixin):
                 source=data.text_of(doc_id),  # INV-1: re-read by hash
                 # Never publish the corpus ordinal: on this corpus `ordinal < 5000` is an exact train-partition
                 # detector, and a Phase 4 feature builder reading `hit.signals` would learn it (CLAUDE.md §4).
-                signals={"channel_score": float(score)},
+                signals={"channel_score": float(score), **signals.get(doc_id, {})},
             )
             for rank, (doc_id, score) in enumerate(ranked, start=1)
         ]
+        explanation = self._explain_order(str(req.mode), request_counters) if req.explain else {}
         confidence, no_strong_match = self._confidence(ranked)
         _STAGES.reset(token)
         total_ms = (time.perf_counter() - started) * 1000
@@ -841,7 +843,51 @@ class AcisEngine(VersionedEngineMixin):
                 **{f"stage.{k}": round(v, 3) for k, v in stages.items()},
             },
             degradations=request_counters.degradations(),
+            explanation=explanation,
         )
+
+    def _explain_signals(
+        self, data: SnapshotData, query: str, route: str, doc_ids: Sequence[str]
+    ) -> dict[str, dict[str, float]]:
+        """Per hit, what each channel said: dense cosine and rank over the whole snapshot, BM25 score and rank.
+
+        Computed for display only, after the ranking is fixed — nothing here can change an order. A channel that
+        did not retrieve a document simply has no entry for it; nothing is filled in.
+        """
+        out: dict[str, dict[str, float]] = {d: {} for d in doc_ids}
+        if data.vectors is not None and self.encoder is not None:
+            vector = self._query_vector(data.snapshot.snapshot_id, query, route=route)
+            scores = exact_search(vector.reshape(1, -1), data.vectors)[0]
+            index = {d: i for i, d in enumerate(data.doc_ids)}
+            for d in doc_ids:
+                s = float(scores[index[d]])
+                out[d]["similarity"] = s
+                out[d]["dense_rank"] = float(int((scores > s).sum()) + 1)
+        if data.lexical is not None and "lexical" not in data.missing:
+            for rank, (d, s) in enumerate(self._lexical_ranking(data, query, 100), start=1):
+                if d in out:
+                    out[d]["bm25"] = float(s)
+                    out[d]["bm25_rank"] = float(rank)
+        return out
+
+    def _explain_order(self, requested: str, counters: Counters) -> dict[str, Any]:
+        """Which stage produced the final order, from this request's own counters."""
+        channel = requested if requested != "auto" else str(self.config.get("run.channel", "auto"))
+        seen = counters.snapshot()
+        if channel == "hybrid":
+            if seen.get("ltr.applied"):
+                ordered_by = "learned ranker over dense + BM25 candidates"
+            elif seen.get("ltr.abstained"):
+                ordered_by = "dense (the ranker abstained: too little evidence fired)"
+            elif any(k.endswith("ltr_skipped") for k in seen):
+                ordered_by = "dense (routed: not statement-like, the ranker stays off)"
+            else:
+                ordered_by = "reciprocal-rank fusion (no ranker loaded)"
+        elif channel == "lexical":
+            ordered_by = "BM25"
+        else:
+            ordered_by = "dense"
+        return {"channel": channel, "ordered_by": ordered_by, "encoder": getattr(self.encoder, "name", "none")}
 
     def _resolve_snapshot(self, req: SearchRequest) -> SnapshotData:
         """Resolve the request's version **once**, and pin it for the whole request (INV-2).
