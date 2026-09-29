@@ -59,6 +59,7 @@ class UnitOut(BaseModel):
     unit_id: str
     key: str
     version: str = "-"
+    repo_id: str = "-"
     body_hash: str
     n_bytes: int
 
@@ -76,6 +77,8 @@ class SnapshotOut(BaseModel):
     version: str
     complete: bool
     missing_channels: list[str] = Field(default_factory=list)
+    repo_id: str = "-"
+    n_units: int = 0
 
 
 class SearchOut(BaseModel):
@@ -120,6 +123,7 @@ class HealthOut(BaseModel):
     numeric_profile: str
     threads: int
     repos: list[str] = Field(default_factory=list)
+    api_features: list[str] = Field(default_factory=list)
 
 
 __all__ = [
@@ -145,4 +149,3 @@ class CommitBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     edits: int = Field(default=3, ge=1, le=50)
     seed: int = Field(default=0, ge=0)
-

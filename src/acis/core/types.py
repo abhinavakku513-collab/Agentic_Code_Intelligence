@@ -132,6 +132,10 @@ class SnapshotRef:
     version: str
     complete: bool
     missing_channels: Sequence[str] = field(default_factory=tuple)
+    #: The repository the snapshot belongs to (`"-"` = the in-memory P0 corpus). Snapshot ids are content-addressed
+    #: and not unique across repositories, so an id alone cannot say which corpus answered.
+    repo_id: str = "-"
+    n_units: int = 0
 
 
 @dataclass(frozen=True, slots=True)

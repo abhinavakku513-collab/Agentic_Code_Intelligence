@@ -214,3 +214,59 @@ def test_a_demo_commit_becomes_a_searchable_version_and_says_what_it_cost(client
 
 def test_a_demo_commit_is_bounded(client):
     assert client.post("/v1/repos/demo/commit", json={"edits": 5000}).status_code == 422
+
+
+# -- the corpus a search answers from is the corpus that was asked for (bug report 4a) ---------------------------
+def test_a_search_is_answered_from_the_selected_repository_and_version(client):
+    """Every result, and the snapshot it names, must belong to the repository and version the request selected.
+
+    Reported from the page: a repository picked on the Versions tab, results and a snapshot id from another corpus.
+    The response now says which repository answered, and this pins it for every repository and every version.
+    """
+    client.post("/v1/repos/other/ingest", json={"kind": "memory", "location": "x"})  # absent source: ignored below
+    engine = client.app.state.engine if hasattr(client.app.state, "engine") else None
+    _ = engine
+    repos = client.get("/v1/repos").json()["repos"]
+    for repo in [r["repo_id"] for r in repos]:
+        versions = client.get(f"/v1/repos/{repo}/versions").json()
+        own = {v["snapshot_id"]: v["label"] for v in versions["versions"]}
+        for selector in ["latest", *own.values()]:
+            body = {"query": "solve", "repo_id": repo, "version": selector, "top_k": 5}
+            out = client.post("/v1/search", json=body).json()
+            assert out["snapshot"]["repo_id"] == repo, (repo, selector)
+            assert out["snapshot"]["id"] in own, (repo, selector)
+            if selector != "latest":
+                assert own[out["snapshot"]["id"]] == selector or out["snapshot"]["version"] == selector
+            assert all(h["unit"]["repo_id"] == repo for h in out["results"])
+    p0 = client.post("/v1/search", json={"query": "solve", "repo_id": "-", "top_k": 3}).json()
+    assert p0["snapshot"]["repo_id"] == "-" and p0["snapshot"]["n_units"] == len(CORPUS)
+
+
+def test_two_repositories_with_identical_content_stay_separate(tmp_path, monkeypatch):
+    """Snapshot ids are content-addressed, so two repositories holding the same content share one. Each must still
+    list its own versions with their real sizes, and answer only from itself."""
+    monkeypatch.setenv("ACIS_HOME", str(tmp_path / "home"))
+    from acis.api.app import create_app
+
+    engine = AcisEngine.from_config(freeze_config(DEFAULT_CONFIG), encoder=HashingEncoder(dim=256))
+    for repo in ("alpha", "beta"):
+        engine.ingest(SourceSpec(kind="memory", location=repo, options={"versions": VERSIONS}), repo_id=repo)
+    client = TestClient(create_app(engine))
+    for repo in ("alpha", "beta"):
+        listed = client.get(f"/v1/repos/{repo}/versions").json()["versions"]
+        assert [v["n_units"] for v in listed] == [1, 2], (repo, listed)
+        out = client.post("/v1/search", json={"query": "helper", "repo_id": repo, "top_k": 2}).json()
+        assert out["snapshot"]["repo_id"] == repo
+
+
+def test_health_lists_every_api_feature_the_page_requires(client):
+    """The page is read from disk per request; a server process started before an upgrade serves new page code
+    against an old API ('NaN units', 404 panels). The page compares this list with what it needs."""
+    import re
+
+    from acis.api.app import API_FEATURES, STATIC_DIR
+
+    listed = client.get("/healthz").json()["api_features"]
+    assert listed == list(API_FEATURES)
+    needed = re.search(r"const needed = \[([^\]]+)\]", (STATIC_DIR / "app.js").read_text("utf-8")).group(1)
+    assert {n.strip().strip('"') for n in needed.split(",")} <= set(listed)

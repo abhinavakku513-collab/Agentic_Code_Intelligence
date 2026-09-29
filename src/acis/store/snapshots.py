@@ -386,9 +386,9 @@ def activate(repo_id: str, snapshot_id: str, *, expected_active: str | None = No
         _write_ref(repo_id, layout.PREV_REF, current)
     _write_ref(repo_id, layout.ACTIVE_REF, snapshot_id)
     with catalog.open_catalog() as db:
-        catalog.set_snapshot_state(db, snapshot_id, "ACTIVE")
+        catalog.set_snapshot_state(db, snapshot_id, "ACTIVE", repo_id=repo_id)
         if current:
-            catalog.set_snapshot_state(db, current, "READY")
+            catalog.set_snapshot_state(db, current, "READY", repo_id=repo_id)
         catalog.journal(db, repo_id, "build.activated", {"snapshot_id": snapshot_id, "previous": current})
     log.info("snapshot.activated", repo=repo_id, snapshot=snapshot_id, previous=current)
     return snapshot_id
@@ -405,6 +405,10 @@ def rollback(repo_id: str) -> str:
     if current:
         _write_ref(repo_id, layout.PREV_REF, current)
     with catalog.open_catalog() as db:
+        # The row states follow the ref: before this, a rollback left two snapshots marked ACTIVE in the catalog.
+        catalog.set_snapshot_state(db, previous, "ACTIVE", repo_id=repo_id)
+        if current:
+            catalog.set_snapshot_state(db, current, "READY", repo_id=repo_id)
         catalog.journal(db, repo_id, "rollback", {"snapshot_id": previous, "from": current})
     log.info("snapshot.rolled_back", repo=repo_id, snapshot=previous, previous=current)
     return previous
@@ -438,6 +442,15 @@ def recover(repo_id: str) -> dict[str, Any]:
             layout.ref_path(repo_id, layout.ACTIVE_REF).unlink(missing_ok=True)
             incidents.append("no serveable snapshot remains; this repository needs a rebuild")
         active = active_snapshot_id(repo_id)
+
+    # The ref is the truth; the catalog's state column follows it (older stores could hold two ACTIVE rows).
+    with catalog.open_catalog() as db:
+        for row in catalog.list_snapshots(db, repo_id):
+            sid, state = str(row["snapshot_id"]), str(row["state"])
+            if sid == active and state != "ACTIVE":
+                catalog.set_snapshot_state(db, sid, "ACTIVE", repo_id=repo_id)
+            elif sid != active and state == "ACTIVE":
+                catalog.set_snapshot_state(db, sid, "READY", repo_id=repo_id)
 
     if removed or incidents:
         with catalog.open_catalog() as db:

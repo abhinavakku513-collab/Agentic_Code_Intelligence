@@ -1,11 +1,15 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>ACIS · code retrieval</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml" />
 <link rel="stylesheet" href="app.css" />
+<script>
+  /* Apply the saved theme before first paint, so the page never flashes the other one. */
+  try { const t = localStorage.getItem("acis-theme"); if (t === "dark" || t === "light") document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 </head>
 <body>
 <header class="topbar">
@@ -13,43 +17,46 @@
     <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="7" /><path d="M10 21l4-10 4 10M11.5 17.5h5M20 11v10" /></svg>
     <div>
       <div class="brand-name">ACIS</div>
-      <div class="brand-sub">Agentic Code Intelligence · offline · CPU</div>
+      <div class="brand-sub">Code retrieval · offline · CPU only</div>
     </div>
   </div>
   <div class="status" id="status">
-    <span class="pill" id="pill-encoder">encoder …</span>
-    <span class="pill" id="pill-corpus">corpus …</span>
+    <span class="pill" id="pill-encoder" title="the embedding model loaded by this server">encoder …</span>
+    <span class="pill" id="pill-corpus" title="the corpus the current tab searches">corpus …</span>
     <span class="pill" id="pill-profile">profile …</span>
+    <button class="icon-btn" id="theme" type="button" title="switch light / dark theme" aria-label="switch theme">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path class="sun" d="M12 4V2m0 20v-2m8-8h2M2 12h2m13.66 5.66 1.41 1.41M4.93 4.93l1.41 1.41m11.32-1.41-1.41 1.41M6.34 17.66l-1.41 1.41M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"/><path class="moon" d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
+    </button>
   </div>
 </header>
 
 <nav class="tabs" role="tablist">
   <button class="tab active" data-view="search" role="tab">Search <span class="tab-sub">P0 · APPS corpus</span></button>
-  <button class="tab" data-view="versions" role="tab">Versions <span class="tab-sub">P1 · pinned retrieval</span></button>
-  <button class="tab" data-view="evolution" role="tab">Evolution <span class="tab-sub">Bonus · across all versions</span></button>
+  <button class="tab" data-view="versions" role="tab">Versions <span class="tab-sub">P1 · one pinned version</span></button>
+  <button class="tab" data-view="evolution" role="tab">Evolution <span class="tab-sub">Bonus · every version</span></button>
+  <button class="tab" data-view="evaluation" role="tab">P0 evaluation <span class="tab-sub">recorded benchmark</span></button>
 </nav>
 
 <main>
   <!-- P0 -->
   <section class="view active" id="view-search">
     <form class="query" id="form-search">
-      <textarea id="q-search" rows="3" placeholder="Describe the code you need — a sentence, or a whole problem statement. Ctrl/⌘+Enter to search."></textarea>
+      <textarea id="q-search" rows="3" placeholder="Describe the code you need: a sentence, an identifier, or a whole problem statement. Ctrl/⌘+Enter searches."></textarea>
       <div class="query-bar">
-        <div class="seg" id="channel" role="radiogroup" aria-label="channel">
-          <button type="button" data-value="auto" class="on" title="dense + BM25 candidates, then the learned ranker where it applies">Auto</button>
+        <div class="seg" id="channel" role="radiogroup" aria-label="ranking">
+          <button type="button" data-value="auto" class="on" title="the served pipeline: dense + BM25 candidates, then the learned ranker (problem statements) or weighted fusion (everything else)">Auto</button>
           <button type="button" data-value="dense" title="embedding similarity only">Dense</button>
           <button type="button" data-value="lexical" title="BM25 only">BM25</button>
-          <button type="button" data-value="hybrid" title="dense + BM25 + learned ranker">Hybrid</button>
         </div>
-        <label class="field">results
-          <select id="topk-search"><option>10</option><option>25</option><option>50</option></select>
-        </label>
+        <div class="field">results <div class="dd" id="topk-search" data-value="10"></div></div>
         <button class="primary" type="submit" id="go-search">Search</button>
       </div>
     </form>
+    <div class="context" id="context-search" hidden></div>
+    <div class="notice" id="notice-search" hidden></div>
     <div class="summary" id="summary-search" hidden></div>
     <div class="results" id="results-search"></div>
-    <div class="empty" id="empty-search">Type a query and press <b>Search</b>. Every result is re-read from the content store by hash — nothing is generated.</div>
+    <div class="empty" id="empty-search">Type a query and press <b>Search</b>. Every result is the stored code, re-read from the content store by hash: nothing is generated.</div>
   </section>
 
   <!-- P1 -->
@@ -59,28 +66,30 @@
         <form class="query" id="form-versions">
           <textarea id="q-versions" rows="2" placeholder="Search one pinned version of a repository."></textarea>
           <div class="query-bar">
-            <label class="field">repository <select id="repo-versions"></select></label>
-            <label class="field">version <select id="version-versions"></select></label>
-            <label class="field grow">or selector <input id="selector-versions" placeholder="e.g. snapshot:s_…  as_of:…" /></label>
-            <button class="primary" type="submit">Search</button>
+            <div class="field">repository <div class="dd" id="repo-versions"></div></div>
+            <div class="field">version <div class="dd" id="version-versions"></div></div>
+            <label class="field grow">or selector <input id="selector-versions" placeholder="snapshot:s_…  ·  as_of:2026-09-01" /></label>
+            <button class="primary" type="submit" id="go-versions">Search</button>
           </div>
         </form>
+        <div class="context" id="context-versions" hidden></div>
+        <div class="notice" id="notice-versions" hidden></div>
         <div class="summary" id="summary-versions" hidden></div>
         <div class="results" id="results-versions"></div>
-        <div class="empty" id="empty-versions">Pick a repository and a version: results come only from that version (INV-2).</div>
+        <div class="empty" id="empty-versions">Pick a repository and a version. Results come only from that version's snapshot (INV-2), and the page checks the answer came from the repository you picked.</div>
       </div>
       <aside class="side-col">
         <div class="card">
-          <h3>Versions</h3>
+          <h3>Versions of <span id="vtable-repo">…</span></h3>
           <table class="vtable"><thead><tr><th>label</th><th>units</th><th>snapshot</th><th></th></tr></thead><tbody id="vtable"></tbody></table>
-          <div class="row-actions"><button id="rollback" class="ghost">Roll back</button></div>
+          <div class="row-actions"><button id="rollback" class="ghost" type="button">Roll back active version</button></div>
         </div>
         <div class="card">
-          <h3>Simulate a commit</h3>
-          <p class="muted">Edits units of the latest version (rename, constant, branch, comment…) and builds the next version. Only changed units are embedded.</p>
+          <h3>Synthetic commit <span class="badge warn">demo mutator</span></h3>
+          <p class="muted">Changes <b>N</b> units of the latest version with Apps-Evolve's synthetic edit operators (rename, constant, branch, comment, reformat, reorder) and builds the result as the next version. It demonstrates incremental rebuilds; it is <b>not</b> ingestion of a real commit. Real repositories are ingested with <code>acis ingest --kind git</code>.</p>
           <div class="row-actions">
             <label class="field">units <input id="commit-edits" type="number" min="1" max="50" value="3" /></label>
-            <button id="commit" class="primary">Commit</button>
+            <button id="commit" class="primary" type="button">Apply synthetic edits</button>
           </div>
           <div id="commit-result" class="commit-result" hidden></div>
         </div>
@@ -93,23 +102,50 @@
     <form class="query" id="form-evolution">
       <textarea id="q-evolution" rows="2" placeholder="Search every version at once."></textarea>
       <div class="query-bar">
-        <label class="field">repository <select id="repo-evolution"></select></label>
+        <div class="field">repository <div class="dd" id="repo-evolution"></div></div>
         <div class="seg" id="evo-mode" role="radiogroup" aria-label="view">
-          <button type="button" data-value="grouped" class="on" title="one answer per lineage">Grouped by lineage</button>
+          <button type="button" data-value="grouped" class="on" title="one answer per lineage, from the lineage index">Grouped by lineage</button>
           <button type="button" data-value="flat" title="every matching revision, duplicates included">Flat · all versions</button>
         </div>
-        <button class="primary" type="submit">Search</button>
+        <button class="primary" type="submit" id="go-evolution">Search</button>
       </div>
     </form>
+    <div class="context" id="context-evolution" hidden></div>
     <div class="summary" id="summary-evolution" hidden></div>
     <div class="results" id="results-evolution"></div>
-    <div class="empty" id="empty-evolution">Grouped: each unit once, at its best revision, with its history. Flat: every revision that matched — compare the duplicate rate.</div>
+    <div class="empty" id="empty-evolution">Grouped: each unit once, at its best revision, with its history across versions (the lineage index). Flat: every revision that matched, so the duplicates grouping removes are visible.</div>
+  </section>
+
+  <!-- P0 evaluation -->
+  <section class="view" id="view-evaluation">
+    <div class="eval-head">
+      <div>
+        <h2>P0 evaluation <span class="badge">recorded, not live</span></h2>
+        <p class="muted">NDCG@10 and MRR@10 of the served pipeline on the APPS dev split, exactly as the ledger recorded them. This page computes nothing: the table below is rendered from the ledger row, and the per-query records come from the artifact that row pins by SHA-256. A search's cosine similarity is a different quantity and never appears here.</p>
+      </div>
+      <button class="primary" id="load-eval" type="button">Load recorded evaluation</button>
+    </div>
+    <div id="eval-panel" class="card eval-card"><div class="muted">Not loaded yet.</div></div>
+    <div class="card">
+      <h3>Re-run it</h3>
+      <p class="muted">Evaluation reads labels, so it is not reachable over the network (spec 06 §1). From a terminal: <code>uv run python scripts/bench/eval_pipeline.py</code> (all 5,000 dev queries, out of fold; minutes with cached vectors). It appends a ledger row, which this page then shows. The held-out TEST labels are never read.</p>
+    </div>
+    <div class="card">
+      <div class="per-query-head">
+        <h3>Per query</h3>
+        <div class="field">show <div class="dd" id="eval-filter" data-value="all"></div></div>
+        <span class="muted" id="eval-count"></span>
+        <span class="pager"><button class="ghost" id="eval-prev" type="button">‹ prev</button><button class="ghost" id="eval-next" type="button">next ›</button></span>
+      </div>
+      <div class="table-wrap"><table class="qtable"><thead><tr><th>query</th><th>route</th><th>ordered by</th><th title="rank of the relevant document, served pipeline">rank</th><th title="rank of the relevant document, dense only">dense</th><th>statement</th></tr></thead><tbody id="eval-rows"></tbody></table></div>
+    </div>
+    <div class="card" id="eval-detail" hidden></div>
   </section>
 </main>
 
 <footer class="footer">
   <span id="latency">no queries yet</span>
-  <span class="muted">all computation local · no network</span>
+  <span>all computation local · no network</span>
 </footer>
 
 <script src="app.js"></script>

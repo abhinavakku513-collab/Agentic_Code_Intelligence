@@ -23,6 +23,7 @@ Pure and deterministic: it returns scores, and the engine orders them with its c
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 
 from acis.rank.candidates import Candidate
@@ -54,4 +55,22 @@ def weighted_fusion(pool: Sequence[Candidate], *, alpha: float) -> dict[str, flo
     return {c.doc_id: alpha * dense.get(c.doc_id, 0.0) + (1.0 - alpha) * lexical.get(c.doc_id, 0.0) for c in pool}
 
 
-__all__ = ["weighted_fusion"]
+#: One identifier or dotted API name, optionally called: `dijkstra`, `heapq.heappush`, `lru_cache`, `sorted()`.
+#: A pattern over the query's *shape*, not a list of names (INV-15): any identifier qualifies.
+IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*(?:\(\))?$")
+
+
+def identifier_query(query: str) -> str | None:
+    """The identifier a query consists of, or `None` (spec 02 §6b: identifier-like queries)."""
+    text = query.strip()
+    if len(text) > 64 or not IDENTIFIER.match(text):
+        return None
+    return text.removesuffix("()")
+
+
+def mentions(identifier: str, text: str) -> bool:
+    """Whether `text` contains `identifier` as a whole token (`heapq.heappush`, not `myheapq.heappushx`)."""
+    return re.search(r"(?<![A-Za-z0-9_.])" + re.escape(identifier) + r"(?![A-Za-z0-9_])", text) is not None
+
+
+__all__ = ["IDENTIFIER", "identifier_query", "mentions", "weighted_fusion"]

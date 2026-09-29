@@ -23,7 +23,10 @@ from typing import Any
 from acis.core.errors import InvalidInput
 from acis.store.layout import catalog_path, safe_name
 
-SCHEMA_VERSION = 1
+#: v2 keys snapshots by (repository, snapshot): snapshot ids are content-addressed and not repository-scoped, so
+#: two repositories holding identical content share an id — under v1 the second one's row replaced the first's,
+#: and the first then listed its versions with zero units.
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS repos (
@@ -45,7 +48,7 @@ CREATE TABLE IF NOT EXISTS versions (
 );
 CREATE INDEX IF NOT EXISTS versions_by_order ON versions(repo_id, ordinal);
 CREATE TABLE IF NOT EXISTS snapshots (
-    snapshot_id TEXT PRIMARY KEY,
+    snapshot_id TEXT NOT NULL,
     repo_id     TEXT NOT NULL REFERENCES repos(repo_id) ON DELETE CASCADE,
     label       TEXT NOT NULL,
     state       TEXT NOT NULL,
@@ -53,7 +56,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
     config_hash TEXT NOT NULL DEFAULT '',
     tree_hash   TEXT NOT NULL DEFAULT '',
     created_ts  REAL NOT NULL,
-    meta        TEXT NOT NULL DEFAULT '{}'
+    meta        TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (repo_id, snapshot_id)
 );
 CREATE TABLE IF NOT EXISTS jobs (
     job_id     TEXT PRIMARY KEY,
@@ -94,6 +98,20 @@ def _migrate(db: sqlite3.Connection) -> None:
             supported=SCHEMA_VERSION,
         )
     if version < SCHEMA_VERSION:
+        has_snapshots = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='snapshots'").fetchone()
+        if version == 1 and has_snapshots:
+            # v1 -> v2: rebuild the snapshots table under the (repository, snapshot) key, rows unchanged — one
+            # script, one transaction (`executescript` would commit anything opened around it).
+            db.executescript(
+                "BEGIN IMMEDIATE;"
+                "ALTER TABLE snapshots RENAME TO snapshots_v1;"
+                + SCHEMA
+                + "INSERT OR IGNORE INTO snapshots SELECT * FROM snapshots_v1;"
+                "DROP TABLE snapshots_v1;"
+                f"PRAGMA user_version = {SCHEMA_VERSION};"
+                "COMMIT;"
+            )
+            return
         db.executescript(SCHEMA)
         db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -208,7 +226,7 @@ def record_snapshot(
 ) -> None:
     db.execute(
         "INSERT INTO snapshots (snapshot_id, repo_id, label, state, n_units, config_hash, tree_hash, created_ts, meta)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(snapshot_id) DO UPDATE SET "
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(repo_id, snapshot_id) DO UPDATE SET "
         "state = excluded.state, n_units = excluded.n_units, meta = excluded.meta",
         (
             snapshot_id,
@@ -224,17 +242,19 @@ def record_snapshot(
     )
 
 
-def set_snapshot_state(db: sqlite3.Connection, snapshot_id: str, state: str) -> None:
+def set_snapshot_state(db: sqlite3.Connection, snapshot_id: str, state: str, *, repo_id: str) -> None:
     """Change a snapshot's state without touching what it *is*.
 
     Activation is a state change, not a rebuild: going through `record_snapshot` would upsert the row and reset
     the unit count to whatever the caller happened to pass, which is how a snapshot ends up claiming zero units.
     """
-    db.execute("UPDATE snapshots SET state = ? WHERE snapshot_id = ?", (state, snapshot_id))
+    db.execute("UPDATE snapshots SET state = ? WHERE repo_id = ? AND snapshot_id = ?", (state, repo_id, snapshot_id))
 
 
-def get_snapshot(db: sqlite3.Connection, snapshot_id: str) -> sqlite3.Row | None:
-    row: sqlite3.Row | None = db.execute("SELECT * FROM snapshots WHERE snapshot_id = ?", (snapshot_id,)).fetchone()
+def get_snapshot(db: sqlite3.Connection, snapshot_id: str, *, repo_id: str) -> sqlite3.Row | None:
+    row: sqlite3.Row | None = db.execute(
+        "SELECT * FROM snapshots WHERE repo_id = ? AND snapshot_id = ?", (repo_id, snapshot_id)
+    ).fetchone()
     return row
 
 

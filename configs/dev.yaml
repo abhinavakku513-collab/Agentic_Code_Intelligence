@@ -6,6 +6,11 @@ model:    {encoder: gte-modernbert-base, dim: 768, config: configs/models/gte-mo
 prep:     {query: {version: q1, view: V0, max_tokens: 1024, head: 768, tail: 256}, doc: {version: d1, max_tokens: 1024, head: 768, tail: 256}}
 lexical:  {k1: 1.5, b: 0.75, delta: 0.5, method: lucene, stemmer: english, tokenizer: code}   # G2
 retrieve: {dense_k: 100, lexical_k: 30, union_cap: 100, prf: {enabled: false}, top_k_out: 1000}
-rank:     {model: artifacts/ranker/g5-gte-modernbert-code.txt}   # G5; absent -> fusion, counted
+rank:     {model: artifacts/ranker/g5-gte-modernbert-code.txt,   # G5: statement_like route
+           generic: {alpha: 0.9}}   # generic route: weighted fusion, alpha tuned on CosQA valid only
+           # [ledger:dev-2c29126949fa]; held out: CosQA test +0.20 [-0.83,+1.22] [ledger:dev-5b0422eda361],
+           # CodeSearchNet-Py +0.76 [+0.30,+1.23] [ledger:dev-e5bae0ac27c0] (scripts/bench/reg_fusion.py)
 route:    {bank: artifacts/route/dev_query_bank.npy, tau: 0.6002, k: 8, rho: 0.35}   # routing v1.1, spec 10 §4
 compose:  {mode_a_scores: rank_derived}
+# Confidence is a report, never a ranking input: calibrated P(top result relevant) per route [ledger:dev-ea942fbdfe47]
+confidence: {calibration: artifacts/confidence/calibration.json}

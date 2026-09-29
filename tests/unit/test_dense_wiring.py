@@ -484,7 +484,11 @@ def test_an_abstaining_ranker_hands_back_the_dense_order_and_is_not_a_fallback(m
             return list(doc_ids), True
 
     monkeypatch.setattr(type(engine), "ranker", property(lambda self: Abstains()))
+    from acis.engine.routing import RouteDecision
+
+    forced = RouteDecision("statement_like", 1.0, 1.0, 0.6, 0.35, "forced by the test")
     monkeypatch.setattr(engine, "route", lambda q, **kw: "statement_like")
+    monkeypatch.setattr(engine, "route_decision", lambda q, **kw: forced)
     data = engine.snapshot_data(snap)
     dense = [d for d, _ in engine._dense_ranking(data, "solve 3", k=len(DOCS))]  # noqa: SLF001
     response = engine.search(SearchRequest(query="solve 3", top_k=len(DOCS)))

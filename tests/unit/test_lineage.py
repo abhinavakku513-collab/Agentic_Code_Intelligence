@@ -213,3 +213,17 @@ def test_the_cascade_recovers_lineages_the_generator_created():
     # Every seed is one lineage running the whole history: only in-place edits were applied.
     assert len(lineages) == len(seeds)
     assert all(len(lin.members) == len(evolution.labels) for lin in lineages)
+
+
+def test_a_revert_is_named_as_a_return_to_earlier_content_not_just_a_change():
+    """Found on a real repository: `git revert` showed as a plain modification. The bytes equal an earlier
+    revision's, which is a fact, so the timeline says which revision the unit returned to."""
+    members = (
+        store.Member(version="v1", key="graph.py", body_hash="h-a", relation="added"),
+        store.Member(version="v2", key="graph.py", body_hash="h-b", relation="modified"),
+        store.Member(version="v3", key="graph.py", body_hash="h-b", relation="identical"),
+        store.Member(version="v4", key="graph.py", body_hash="h-a", relation="modified"),
+    )
+    timeline = store.Lineage("lin_x", members).timeline()
+    assert [s.get("same_content_as") for s in timeline] == [None, None, None, "v1"]
+    assert [s["changed"] for s in timeline] == [True, True, False, True]

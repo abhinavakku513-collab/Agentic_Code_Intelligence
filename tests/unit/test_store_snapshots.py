@@ -16,7 +16,7 @@ import json
 import pytest
 
 from acis.core.errors import InvalidInput, NotFound, SnapshotInvalid, VersionConflict
-from acis.store import layout, snapshots
+from acis.store import catalog, layout, snapshots
 from acis.store.cas import BlobStore
 
 UNITS_V1 = [("u1", "def a():\n    return 1\n"), ("u2", "def b():\n    return 2\n")]
@@ -123,6 +123,26 @@ def test_rollback_re_points_active_without_rebuilding_anything():
     assert restored == first.snapshot_id and snapshots.active_snapshot_id("apps") == first.snapshot_id
     # Immutable snapshots: rolling back did not touch the one we rolled back *from*.
     assert (layout.snapshot_dir("apps", second.snapshot_id) / layout.VALID_MARKER).is_file()
+
+
+def test_the_catalog_marks_exactly_the_active_snapshot_active_after_rollbacks():
+    """The ref is the truth and the catalog's state column follows it. Rollback used to move only the ref, which
+    left two rows marked ACTIVE; recovery reconciles a store written before the fix."""
+    build(label="v1")
+    build(label="v2", units=UNITS_V2)
+
+    def active_rows() -> list[str]:
+        with catalog.open_catalog() as db:
+            return [str(r["snapshot_id"]) for r in catalog.list_snapshots(db, "apps") if r["state"] == "ACTIVE"]
+
+    for _ in range(3):
+        snapshots.rollback("apps")
+        assert active_rows() == [snapshots.active_snapshot_id("apps")]
+    with catalog.open_catalog() as db:  # simulate the drift an older store carries
+        for row in catalog.list_snapshots(db, "apps"):
+            catalog.set_snapshot_state(db, str(row["snapshot_id"]), "ACTIVE", repo_id="apps")
+    snapshots.recover("apps")
+    assert active_rows() == [snapshots.active_snapshot_id("apps")]
 
 
 def test_rolling_back_twice_returns_to_where_it_started():

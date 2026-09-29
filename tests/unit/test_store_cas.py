@@ -192,6 +192,24 @@ def test_an_older_schema_is_migrated_rather_than_guessed_at():
         catalog.register_repo(db, "apps", source_kind="jsonl")
 
 
+def test_a_v1_catalog_is_migrated_to_per_repository_snapshot_keys_without_losing_rows():
+    """v1 keyed snapshots by id alone, so two repositories with identical content shared (and fought over) one row."""
+    path = layout.catalog_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as raw:
+        raw.executescript(catalog.SCHEMA.replace("    meta        TEXT NOT NULL DEFAULT '{}',\n    PRIMARY KEY (repo_id, snapshot_id)", "    meta        TEXT NOT NULL DEFAULT '{}'").replace("snapshot_id TEXT NOT NULL,\n    repo_id     TEXT NOT NULL REFERENCES", "snapshot_id TEXT PRIMARY KEY,\n    repo_id     TEXT NOT NULL REFERENCES"))
+        raw.execute("INSERT INTO repos VALUES ('a', 'units', 0, '{}')")
+        raw.execute("INSERT INTO snapshots VALUES ('s_1', 'a', 'v1', 'ACTIVE', 7, '', '', 0, '{}')")
+        raw.execute("PRAGMA user_version = 1")
+    with catalog.open_catalog() as db:
+        assert int(db.execute("PRAGMA user_version").fetchone()[0]) == catalog.SCHEMA_VERSION == 2
+        assert [dict(r)["n_units"] for r in catalog.list_snapshots(db, "a")] == [7]
+        catalog.register_repo(db, "b", source_kind="units")
+        catalog.record_snapshot(db, "s_1", repo_id="b", label="v1", state="READY", n_units=3)
+        assert [dict(r)["n_units"] for r in catalog.list_snapshots(db, "a")] == [7]  # untouched by b's row
+        assert [dict(r)["n_units"] for r in catalog.list_snapshots(db, "b")] == [3]
+
+
 def test_a_future_schema_is_refused_rather_than_downgraded():
     """A newer ACIS wrote this store. Guessing at its tables is how data is lost."""
     path = layout.catalog_path()

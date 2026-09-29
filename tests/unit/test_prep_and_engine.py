@@ -310,3 +310,26 @@ def test_diagnostics_reports_no_agent_calls(engine):
     assert diag.agent_calls == 0  # INV-13
     assert diag.config_hash == eng.config_hash
     assert diag.snapshots and diag.snapshots[0]["units"] == 8
+
+
+def test_an_identifier_query_puts_units_containing_that_identifier_first(tiny_corpus):
+    """Spec 02 §6b: identifier-like queries get an exact identifier channel first. Reported from the page: the unit
+    defining `dijkstra` sat at #6 behind unrelated programs for the query `dijkstra`."""
+    from acis.rank.fusion import identifier_query, mentions
+
+    assert identifier_query("heapq.heappush") == "heapq.heappush"
+    assert identifier_query("sorted()") == "sorted"
+    assert identifier_query("shortest path") is None and identifier_query("x" * 80) is None
+    assert mentions("heapq.heappush", "import heapq\nheapq.heappush(h, 1)")
+    assert not mentions("heapq.heappush", "myheapq.heappushx(h)")
+
+    cfg = freeze_config(
+        {**DEFAULT_CONFIG, "run": {**DEFAULT_CONFIG["run"], "channel": "hybrid"}, "rank": {"generic": {"alpha": 0.9}}}
+    )
+    eng = AcisEngine.from_config(cfg, encoder=HashingEncoder())
+    snap = eng.build_snapshot([Snippet(handle=i, text=t) for i, t in tiny_corpus], source="x")
+    containing = {i for i, t in tiny_corpus if mentions("heapq", t)}
+    assert containing, "the fixture needs a unit that uses heapq"
+    hits = eng.search_batch(snap, ["q"], ["heapq"], top_k=len(tiny_corpus))["q"]
+    head = [d for d, _ in hits[: len(containing)]]
+    assert set(head) == containing
