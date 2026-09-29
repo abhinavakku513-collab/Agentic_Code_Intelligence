@@ -610,6 +610,27 @@ class AcisEngine(VersionedEngineMixin):
                     order = exact + [d for d in order if d not in set(exact)]
             return order
 
+    def pool_features(self, data: SnapshotData, query: str, pool: Sequence[Any]) -> np.ndarray:
+        """Appendix A features for a candidate pool — the matrix the ranker reads (spec 02 §4 stage 7).
+
+        Public so an offline experiment builds exactly the features serving builds.
+        """
+        from acis.features.query import bridge as bridge_features  # noqa: PLC0415
+        from acis.features.query import extract as query_features  # noqa: PLC0415
+        from acis.rank import candidates as cand  # noqa: PLC0415
+
+        qf = query_features(query)
+        bridge = {c.doc_id: bridge_features(qf, data.features_of(c.doc_id)) for c in pool}
+        doc_meta = {
+            c.doc_id: {
+                "n_tokens": data.features_of(c.doc_id).n_tokens,
+                "parse_ok": data.features_of(c.doc_id).parse_ok,
+                "dup_cluster_size": data.duplicate_count(c.doc_id),
+            }
+            for c in pool
+        }
+        return cand.feature_matrix(pool, bridge=bridge, query_tokens=qf.n_tokens, doc_meta=doc_meta)
+
     def _hybrid_ranking(
         self,
         data: SnapshotData,
@@ -626,9 +647,6 @@ class AcisEngine(VersionedEngineMixin):
         tuned and the dense order otherwise (spec 02 §4 stage 8). Every step down increments a counter and appears
         in `degradations`, and strict mode refuses all of them.
         """
-        from acis.features.query import bridge as bridge_features  # noqa: PLC0415
-        from acis.features.query import extract as query_features  # noqa: PLC0415
-        from acis.rank import candidates as cand  # noqa: PLC0415
 
         dense_order, pool = self.candidate_pool(data, query, route=route, want=want, counters=counters, strict=strict)
         if not pool:
@@ -655,17 +673,7 @@ class AcisEngine(VersionedEngineMixin):
         elif ranker is not None:
             pool = self._with_prf(data, query, route=route, pool=pool)
             with stage("features"):
-                qf = query_features(query)
-                bridge = {c.doc_id: bridge_features(qf, data.features_of(c.doc_id)) for c in pool}
-                doc_meta = {
-                    c.doc_id: {
-                        "n_tokens": data.features_of(c.doc_id).n_tokens,
-                        "parse_ok": data.features_of(c.doc_id).parse_ok,
-                        "dup_cluster_size": data.duplicate_count(c.doc_id),
-                    }
-                    for c in pool
-                }
-                matrix = cand.feature_matrix(pool, bridge=bridge, query_tokens=qf.n_tokens, doc_meta=doc_meta)
+                matrix = self.pool_features(data, query, pool)
             with stage("ranker"):
                 head, abstained = ranker.rerank([c.doc_id for c in pool], matrix)
             if abstained:
