@@ -123,6 +123,7 @@ class HealthOut(BaseModel):
     numeric_profile: str
     threads: int
     repos: list[str] = Field(default_factory=list)
+    api_features: list[str] = Field(default_factory=list)
 
 
 __all__ = [

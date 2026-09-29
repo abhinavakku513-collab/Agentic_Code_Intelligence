@@ -257,3 +257,16 @@ def test_two_repositories_with_identical_content_stay_separate(tmp_path, monkeyp
         assert [v["n_units"] for v in listed] == [1, 2], (repo, listed)
         out = client.post("/v1/search", json={"query": "helper", "repo_id": repo, "top_k": 2}).json()
         assert out["snapshot"]["repo_id"] == repo
+
+
+def test_health_lists_every_api_feature_the_page_requires(client):
+    """The page is read from disk per request; a server process started before an upgrade serves new page code
+    against an old API ('NaN units', 404 panels). The page compares this list with what it needs."""
+    import re
+
+    from acis.api.app import API_FEATURES, STATIC_DIR
+
+    listed = client.get("/healthz").json()["api_features"]
+    assert listed == list(API_FEATURES)
+    needed = re.search(r"const needed = \[([^\]]+)\]", (STATIC_DIR / "app.js").read_text("utf-8")).group(1)
+    assert {n.strip().strip('"') for n in needed.split(",")} <= set(listed)
