@@ -292,7 +292,7 @@ def cmd_search(args: argparse.Namespace) -> int:
             version=args.version,
             top_k=args.top_k,
             mode=args.mode,
-            explain=args.explain,
+            explain=True,  # the per-hit signals are what the output shows; computed after the order is fixed
             diagnostics=True,
         )
     )
@@ -311,10 +311,12 @@ def cmd_search(args: argparse.Namespace) -> int:
                 "confidence": response.confidence,
                 "timings_ms": dict(response.timings_ms),
                 "degradations": list(response.degradations),
+                "explanation": dict(response.explanation),
                 "results": [
                     {
                         "rank": h.rank,
                         "score": round(h.score, 6),
+                        "signals": {k: round(v, 6) for k, v in h.signals.items()},
                         "unit_id": h.unit.unit_id,
                         "key": h.unit.key,
                         "body_hash": h.unit.body_hash,
@@ -334,15 +336,21 @@ def cmd_search(args: argparse.Namespace) -> int:
     version = f"  version {snapshot.version_id}" if args.repo else ""
     print(f"snapshot : {snapshot.snapshot_id}{version}  {snapshot.n_units} units, {opened} in {build_seconds:.1f}s")
     timings = "  ".join(f"{k}={v:.1f}ms" for k, v in sorted(response.timings_ms.items()))
-    print(f"route    : {response.route}  confidence={response.confidence}  {timings}")
+    print(f"order    : {response.explanation.get('ordered_by', '-')}  (route {response.route})")
+    print(f"timings  : {timings}")
     if response.degradations:
         print(f"degraded : {', '.join(response.degradations)}")
     print()
+    print(f"{'#':>3}  {'cosine':>6}  {'dense':>5}  {'bm25':>5}  {'key':<24} {'body hash':<12}  first line")
     for hit in response.results:
         first = next((line for line in hit.source.splitlines() if line.strip()), "")
+        sig = hit.signals
+        cosine = f"{sig['similarity']:.3f}" if "similarity" in sig else "-"
+        dense = f"#{int(sig['dense_rank'])}" if "dense_rank" in sig else "-"
+        bm25 = f"#{int(sig['bm25_rank'])}" if "bm25_rank" in sig else "-"
         # The key is what a person recognises ("sort.py"); the body hash is what makes the evidence checkable.
         label = (hit.unit.key or hit.unit.unit_id)[:24]
-        print(f"{hit.rank:>3}  {hit.score:8.4f}  {label:<24} {hit.unit.body_hash[:12]}  {first[:76]}")
+        print(f"{hit.rank:>3}  {cosine:>6}  {dense:>5}  {bm25:>5}  {label:<24} {hit.unit.body_hash[:12]}  {first[:60]}")
     return 0
 
 
