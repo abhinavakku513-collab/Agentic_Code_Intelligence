@@ -78,10 +78,17 @@ class SnapshotData:
     #: duplicate documents — and the same body in another version — are parsed once.
     _features: dict[str, Any] = field(default_factory=dict, repr=False)
     _dup_counts: dict[str, int] = field(default_factory=dict, repr=False)
+    _positions: dict[str, int] = field(default_factory=dict, repr=False)
 
     @property
     def size(self) -> int:
         return len(self.doc_ids)
+
+    def position(self, doc_id: str) -> int:
+        """Row of `doc_id` in the dense matrix; built once per (immutable) snapshot."""
+        if not self._positions:
+            self._positions.update({d: i for i, d in enumerate(self.doc_ids)})
+        return self._positions[doc_id]
 
     def features_of(self, doc_id: str) -> Any:
         """Document features, parsed on demand and cached for the life of the snapshot (immutable content)."""
@@ -214,6 +221,9 @@ class AcisEngine(VersionedEngineMixin):
         #: The TRAIN-query bank routing v1.1 reads (spec 10 §4). `None` sends every query down the generic path.
         self._bank: Any = None
         self._bank_loaded = False
+        #: The confidence calibration (`confidence.calibration`); loaded once, `None` when not configured.
+        self._calibration: Any = None
+        self._calibration_loaded = False
 
     # -- construction ------------------------------------------------------------------------------------------
     @classmethod
@@ -422,8 +432,14 @@ class AcisEngine(VersionedEngineMixin):
         vector = None
         if bank is not None and self.encoder is not None:
             try:
+                # The dense channel's own input (view + head/tail), so the dense stage's encode is a cache hit:
+                # encoding the raw text here cost a second full-length forward pass on every query over 1,024
+                # tokens (5.5 s for a 16k-character query). Identical text for anything shorter.
                 with stage("route_encode"):
-                    vector = np.asarray(self.encoder.encode([query], is_query=True)[0], dtype=np.float32)
+                    texts = query_encoder_texts(self.config, query)
+                    vector = pooled_query_vector(
+                        np.asarray(self.encoder.encode(list(texts), is_query=True), dtype=np.float32)
+                    )
             except Exception:  # noqa: BLE001 — a routing failure routes down, it never fails a search
                 vector = None
         return decide(
@@ -547,9 +563,7 @@ class AcisEngine(VersionedEngineMixin):
         if data.lexical is not None and "lexical" not in data.missing:
             lexical_order = self._lexical_ranking(data, query, lexical_k)
         else:
-            degradation(
-                "lexical_unavailable", "dense-only fusion", strict=strict, counters=counters or self.counters
-            )
+            degradation("lexical_unavailable", "dense-only fusion", strict=strict, counters=counters or self.counters)
 
         pool = cand.union(dense_order, lexical_order, dense_k=dense_k, lexical_k=lexical_k, cap=union_cap)
         return dense_order, pool
@@ -560,7 +574,9 @@ class AcisEngine(VersionedEngineMixin):
         value = self.config.get("rank.generic.alpha", None)
         return None if value in (None, "") else float(value)
 
-    def fused_order(self, data: SnapshotData, query: str, pool: Sequence[Any], *, route: str) -> list[str]:
+    def fused_order(
+        self, data: SnapshotData, query: str, pool: Sequence[Any], *, route: str, counters: Counters | None = None
+    ) -> list[str]:
         """Weighted dense + lexical fusion over the pool (spec 02 §4 stage 8, generic route).
 
         A lexical-only candidate has no cosine yet; it gets its exact one from the snapshot's matrix (one dot
@@ -568,7 +584,7 @@ class AcisEngine(VersionedEngineMixin):
         """
         from dataclasses import replace as _replace  # noqa: PLC0415
 
-        from acis.rank.fusion import weighted_fusion  # noqa: PLC0415
+        from acis.rank.fusion import identifier_query, mentions, weighted_fusion  # noqa: PLC0415
 
         alpha = self.generic_alpha
         assert alpha is not None
@@ -581,7 +597,18 @@ class AcisEngine(VersionedEngineMixin):
             pool = [_replace(c, dense_score=filled[c.doc_id]) if c.doc_id in filled else c for c in pool]
         with stage("fusion"):
             fused = weighted_fusion(pool, alpha=alpha)
-            return [doc for doc, _ in self._stable_order(data, list(fused.items()))]
+            order = [doc for doc, _ in self._stable_order(data, list(fused.items()))]
+            # Spec 02 §6b: for an identifier-like query, units containing that exact identifier come first (still
+            # in fused order), then the rest. A shape rule, not a name list (INV-15); nothing matches -> unchanged.
+            identifier = identifier_query(query)
+            if identifier is not None:
+                exact = [d for d in order if mentions(identifier, data.text_of(d))]
+                if exact:
+                    sink = counters or self.counters
+                    sink.incr("fusion.identifier_first")
+                    sink.incr("fusion.identifier_matches", len(exact))
+                    order = exact + [d for d in order if d not in set(exact)]
+            return order
 
     def _hybrid_ranking(
         self,
@@ -603,9 +630,7 @@ class AcisEngine(VersionedEngineMixin):
         from acis.features.query import extract as query_features  # noqa: PLC0415
         from acis.rank import candidates as cand  # noqa: PLC0415
 
-        dense_order, pool = self.candidate_pool(
-            data, query, route=route, want=want, counters=counters, strict=strict
-        )
+        dense_order, pool = self.candidate_pool(data, query, route=route, want=want, counters=counters, strict=strict)
         if not pool:
             return dense_order[:want]
 
@@ -620,7 +645,7 @@ class AcisEngine(VersionedEngineMixin):
                 counters.incr(f"route.{route}.ltr_skipped")
             if self.generic_alpha is not None:
                 counters.incr("fusion.applied")
-                head = self.fused_order(data, query, pool, route=route)
+                head = self.fused_order(data, query, pool, route=route, counters=counters)
             else:
                 # The specified ranking for this route is missing, so the dense order serves it: a fallback,
                 # counted and refused by strict mode like every other (INV-7).
@@ -652,7 +677,7 @@ class AcisEngine(VersionedEngineMixin):
                 counters.incr("ltr.applied")
         elif self.generic_alpha is not None:
             degradation("ltr_unavailable", "weighted fusion", strict=strict, counters=counters)
-            head = self.fused_order(data, query, pool, route=route)
+            head = self.fused_order(data, query, pool, route=route, counters=counters)
         else:
             degradation("ltr_unavailable", "dense order", strict=strict, counters=counters)
             head = []
@@ -844,7 +869,8 @@ class AcisEngine(VersionedEngineMixin):
         token = _STAGES.set(stages)
         t_norm = time.perf_counter()
         query, truncated = self.normalise_query(req.query)
-        route = self.route(query)
+        decision = self.route_decision(query)
+        route = cast(Route, decision.route)
         top_k = max(1, min(int(req.top_k), MAX_TOP_K))
         strict = bool(self.config.strict)
 
@@ -873,7 +899,26 @@ class AcisEngine(VersionedEngineMixin):
             for rank, (doc_id, score) in enumerate(ranked, start=1)
         ]
         explanation = self._explain_order(str(req.mode), request_counters) if req.explain else {}
-        confidence, no_strong_match = self._confidence(ranked)
+        if req.explain:
+            explanation["route_decision"] = decision.as_dict()
+        z = self.confidence_signal(data, query, [d for d, _ in ranked], route=route) if ranked else float("nan")
+        confidence, no_strong_match, confidence_facts = self._confidence(z, route)
+        exact = request_counters.get("fusion.identifier_matches")
+        if exact:
+            # A verbatim identifier match is a fact about the text, not an estimate: it is never a weak match. The
+            # calibrated level is kept, with the basis saying the calibration was not fitted on such queries.
+            from acis.rank.fusion import identifier_query  # noqa: PLC0415
+
+            no_strong_match = False
+            confidence_facts["basis"] = (
+                f"{exact} unit(s) contain `{identifier_query(query)}` verbatim and are listed first (exact match). "
+                "The calibrated estimate was fitted on natural-language queries, not identifiers: "
+                + str(confidence_facts["basis"])
+            )
+            confidence_facts["identifier_matches"] = exact
+        if req.explain:
+            explanation["confidence"] = confidence_facts
+            explanation["confidence_basis"] = confidence_facts["basis"]
         _STAGES.reset(token)
         total_ms = (time.perf_counter() - started) * 1000
         return SearchResponse(
@@ -882,6 +927,8 @@ class AcisEngine(VersionedEngineMixin):
                 version=data.snapshot.version_id,
                 complete=data.snapshot.complete,
                 missing_channels=data.missing,
+                repo_id=data.snapshot.repo_id,
+                n_units=data.size,
             ),
             results=hits,
             confidence=confidence,
@@ -932,6 +979,11 @@ class AcisEngine(VersionedEngineMixin):
                 ordered_by = "learned ranker over dense + BM25 candidates"
             elif seen.get("ltr.abstained"):
                 ordered_by = "dense (the ranker abstained: too little evidence fired)"
+            elif seen.get("fusion.identifier_first"):
+                ordered_by = (
+                    "exact identifier matches first, then weighted fusion of dense + BM25 "
+                    f"(α = {alpha:g}; generic route)"
+                )
             elif seen.get("fusion.applied"):
                 ordered_by = f"weighted fusion of dense + BM25 (α = {alpha:g}; generic route, the ranker stays off)"
             elif seen.get("fusion.untuned"):
@@ -968,22 +1020,48 @@ class AcisEngine(VersionedEngineMixin):
             raise NotReady("no snapshot has been built yet")
         return next(reversed(list(self._snapshots.values())))
 
-    def _confidence(self, ranked: Sequence[tuple[str, float]]) -> tuple[Confidence, bool]:
-        """A routing signal only; it never reorders anything (spec 02 §4 stage 11).
+    @property
+    def calibration(self) -> Any:
+        """The confidence calibration named by `confidence.calibration`, loaded once; `None` when not configured."""
+        if self._calibration_loaded:
+            return self._calibration
+        self._calibration_loaded = True
+        path = str(self.config.get("confidence.calibration", "") or "")
+        if path:
+            from acis.core.paths import acis_root  # noqa: PLC0415
+            from acis.rank.confidence import Calibration  # noqa: PLC0415
 
-        Phase 1 reports a margin-derived band and marks it uncalibrated in `diagnostics`; the isotonic calibration
-        of spec 02 §4 is fitted out-of-fold in Phase 4.
-        """
-        if len(ranked) < 2:
-            return "low", not ranked
-        top, second = float(ranked[0][1]), float(ranked[1][1])
-        spread = abs(top) + 1e-9
-        margin = (top - second) / spread
-        if margin >= 0.25:
-            return "high", False
-        if margin >= 0.05:
-            return "medium", False
-        return "low", True
+            target = Path(path) if Path(path).is_absolute() else acis_root() / path
+            if target.is_file():
+                self._calibration = Calibration.load(target)
+        return self._calibration
+
+    def confidence_signal(self, data: SnapshotData, query: str, served: Sequence[str], *, route: str) -> float:
+        """z of the served #1 against this query's own top-100 dense cosines (`acis.rank.confidence`)."""
+        from acis.rank.confidence import CROWD, z_top1  # noqa: PLC0415
+
+        if not served or data.vectors is None or self.encoder is None:
+            return float("nan")
+        vector = self._query_vector(data.snapshot.snapshot_id, query, route=route)
+        scores = exact_search(vector.reshape(1, -1), data.vectors)[0]
+        crowd = min(CROWD, int(scores.shape[0]))
+        top = -np.partition(-scores, crowd - 1)[:crowd]
+        return z_top1(np.sort(top)[::-1], float(scores[data.position(served[0])]))
+
+    def _confidence(self, z: float, route: str) -> tuple[Confidence, bool, dict[str, Any]]:
+        """A report, never a ranking input (spec 02 §4 stage 11): calibrated P(served #1 relevant) → band."""
+        from acis.rank.confidence import band  # noqa: PLC0415
+
+        calibration = self.calibration
+        if calibration is None:
+            return "low", False, {"calibrated": False, "z": z, "basis": "confidence is not calibrated"}
+        p = calibration.probability(route, z)
+        level = cast(Confidence, band(p))
+        basis = (
+            f"estimated P(top result relevant) = {p:.2f} for the {route} route, from z = {z:.2f} "
+            f"(isotonic fit on {calibration.source(route)}) [ledger:{calibration.ledger_run_id}]"
+        )
+        return level, level == "low", {"calibrated": True, "z": z, "p": p, "basis": basis}
 
     # -- introspection ---------------------------------------------------------------------------------------------
     def diagnostics(self, repo_id: str | None = None) -> Diagnostics:
