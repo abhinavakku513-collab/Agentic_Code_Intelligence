@@ -1,9 +1,10 @@
 /* ACIS UI — vanilla, offline, no dependencies (D15).
  *
- * Everything shown comes from the API. Similarities and ranks are the engine's own signals for this query, timings
- * are the engine's stage timings, every code block is the text the engine re-read from the content store by hash
- * (INV-1), and the P0 evaluation panel is HTML the server rendered from its ledger row, inserted unchanged. Nothing
- * here ranks, re-scores, estimates or fills in a value the backend did not return.
+ * Everything shown comes from the API. The architecture (models, channels, ranker, device) is what `/v1/system`
+ * reports the running engine has loaded; ranks and channel evidence are the engine's own signals for this query;
+ * timings are its stage timings; every code block is the text re-read from the content store by hash (INV-1); every
+ * accuracy number is a ledger row's value, formatted by the server. Nothing here ranks, re-scores, estimates or
+ * fills in a value the backend did not return.
  */
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -166,7 +167,7 @@ function recordLatency(ms, serverMs) {
 }
 
 /* -- corpus pill: always the corpus the current tab searches ------------------------------------------------ */
-const corpus = { search: null, versions: null, evolution: null, evaluation: "recorded evaluation · dev split" };
+const corpus = { search: null, versions: null, evolution: null, evaluation: "recorded evaluation · dev split", system: "live view of this server" };
 function currentTab() { return document.querySelector(".tab.active").dataset.view; }
 function showCorpus() {
   const text = corpus[currentTab()];
@@ -175,11 +176,115 @@ function showCorpus() {
 }
 function setCorpus(tab, text) { corpus[tab] = text; showCorpus(); }
 
+/* -- what this server runs (GET /v1/system) ---------------------------------------------------------------- */
+let sys = null;
+const shortName = (name) => String(name || "").split("/").pop();
+const millions = (n) => (Number.isFinite(Number(n)) && n ? `${Math.round(Number(n) / 1e6)}M` : null);
+function encoderOf(role) { return sys ? sys.encoders.find((e) => e.role === role) : null; }
+function stateBadge(e) {
+  if (!e) return "";
+  if (e.state === "serving") return '<span class="pl-state serving">serving</span>';
+  if (e.state && e.state.startsWith("indexing")) {
+    const p = e.progress || {};
+    const done = p.stage === "queries" ? p.queries_done : p.corpus_done;
+    const total = p.stage === "queries" ? p.queries_total : p.corpus_total;
+    const pct = total ? ` ${Math.floor((100 * done) / total)}%` : "";
+    return `<span class="pl-state indexing" title="${escapeHtml(e.reason || "")}">${escapeHtml(e.state)}${pct}</span>`;
+  }
+  return `<span class="pl-state off" title="${escapeHtml(e.reason || "")}">${escapeHtml(e.state || "off")}</span>`;
+}
+
+/* The pipeline: every node is a component the server reports; after a search each node shows what it did. */
+function pipelineNodes() {
+  const primary = encoderOf("primary dense channel");
+  const second = encoderOf("second dense channel");
+  const lex = (sys && sys.lexical) || {};
+  const cand = (sys && sys.candidates) || {};
+  const rk = (sys && sys.ranker) || {};
+  const nFeat = rk.features, nGroups = rk.groups ? Object.keys(rk.groups).length : null;
+  return {
+    understand: { kicker: "1 · Query", title: "Query understanding", desc: "normalise · extract identifiers · detect query type" },
+    channels: [
+      { id: "dense", color: "c-dense", title: primary ? shortName(primary.name) : "dense encoder", state: primary,
+        desc: primary ? [`semantic`, primary.dim && `${primary.dim}-d`, millions(primary.params) && `${millions(primary.params)} params`, cand.dense_k && `top ${cand.dense_k}`].filter(Boolean).join(" · ") : "" },
+      { id: "dense2", color: "c-dense2", title: second ? shortName(second.name || second.key) : "second encoder", state: second,
+        desc: second ? ["semantic, instruction-aware", second.state === "serving" && cand.aux_k ? `top ${cand.aux_k}` : null].filter(Boolean).join(" · ") : "" },
+      { id: "bm25", color: "c-bm25", title: "BM25", desc: [`keywords, code-aware tokenizer`, cand.lexical_k && `top ${cand.lexical_k}`].filter(Boolean).join(" · ") },
+      { id: "symbols", color: "c-symbols", title: "Exact identifiers", desc: [lex.symbols && lex.symbols.distinct_symbols ? `${fmtInt(lex.symbols.distinct_symbols)} indexed` : "identifier index", cand.symbol_k && `top ${cand.symbol_k}`].filter(Boolean).join(" · ") },
+    ],
+    union: { kicker: "3 · Candidates", title: "Candidate union", desc: `${cand.union_cap ? `up to ${cand.union_cap}` : "union"} · every candidate scored by every channel` },
+    features: { kicker: "4 · Evidence", title: nFeat ? `${nFeat} ranking signals` : "Ranking signals", desc: nGroups ? `${nGroups} families: similarity, keywords, identifiers, I/O literals, agreement, length` : "per-candidate features" },
+    rank: { kicker: "5 · Ranking", title: rk.loaded ? "Learned ranking" : "Ranking", desc: rk.loaded ? `LightGBM LambdaRank · ${rk.rounds} trees · trained on ${fmtInt(rk.trained_on_queries)} queries` : "no ranker loaded" },
+    evidence: { kicker: "6 · Results", title: "Verified code", desc: "re-read from the content store by hash · calibrated confidence" },
+  };
+}
+function nodeHtml(key, n, extra = "") {
+  return `<div class="pl-node ${extra}" data-node="${key}"><div class="pl-kicker">${escapeHtml(n.kicker || "")}</div><div class="pl-title">${escapeHtml(n.title)}${n.badge || ""}</div><div class="pl-desc">${escapeHtml(n.desc || "")}</div><div class="pl-live"></div></div>`;
+}
+function renderPipeline(target) {
+  const n = pipelineNodes();
+  const channels = n.channels.map((c) => `<div class="pl-node" data-node="ch-${c.id}"><div class="pl-title"><i class="dotc ${c.color}"></i>${escapeHtml(c.title)}${c.state && c.state.state !== "serving" ? stateBadge(c.state) : ""}</div><div class="pl-desc">${escapeHtml(c.desc)}</div><div class="pl-live"></div></div>`).join("");
+  $(target).innerHTML = [
+    nodeHtml("understand", n.understand),
+    '<div class="pl-arrow"></div>',
+    `<div><div class="pl-group-kicker">2 · Retrieval channels</div><div class="pl-channels">${channels}</div></div>`,
+    '<div class="pl-arrow"></div>', nodeHtml("union", n.union),
+    '<div class="pl-arrow"></div>', nodeHtml("features", n.features),
+    '<div class="pl-arrow"></div>', nodeHtml("rank", n.rank),
+    '<div class="pl-arrow"></div>', nodeHtml("evidence", n.evidence),
+  ].join("");
+}
+const ORDERING = {
+  ltr: "Learned ranking (LambdaRank)",
+  fusion: "Hybrid score fusion",
+  identifier_first: "Exact identifier match first",
+  ltr_abstained: "Semantic order kept",
+  dense: "Semantic similarity only",
+  lexical: "BM25 only",
+};
+function lightPipeline(target, r) {
+  const root = $(target); if (!root || !root.children.length) return;
+  const e = r.explanation || {}, c = e.candidates || {}, t = r.timings_ms || {};
+  const ms = (...keys) => keys.reduce((a, k) => a + (t[`stage.${k}`] || 0), 0);
+  const set = (key, live, lit = true) => {
+    const node = root.querySelector(`[data-node="${key}"]`); if (!node) return;
+    node.classList.toggle("lit", lit && live !== null); node.classList.toggle("idle", live === null);
+    node.querySelector(".pl-live").textContent = live || "";
+  };
+  const symbols = (e.query_symbols || []).length;
+  set("understand", `${ms("route", "route_encode", "encode", "encode_wait").toFixed(0)} ms${symbols ? ` · ${symbols} identifier${symbols > 1 ? "s" : ""}` : ""}`);
+  const used = new Set(e.channels || []);
+  const single = e.channel === "dense" || e.channel === "lexical";
+  const chan = (id, from, stages) => {
+    if (single) return set(`ch-${id}`, (e.channel === "dense" && id === "dense") || (e.channel === "lexical" && id === "bm25") ? `${ms(...stages).toFixed(0)} ms` : null);
+    set(`ch-${id}`, used.has(id) ? `${fmtInt(c[from])} found · ${ms(...stages).toFixed(1)} ms` : null);
+  };
+  chan("dense", "from_dense", ["dense"]); chan("dense2", "from_dense2", ["encode2", "dense2"]);
+  chan("bm25", "from_bm25", ["bm25"]); chan("symbols", "from_symbols", ["symbols"]);
+  set("union", single ? null : c.candidates != null ? `${fmtInt(c.candidates)} candidates` : null);
+  const ordering = e.ordering || (single ? e.channel : null);
+  set("features", ordering === "ltr" ? `${ms("features").toFixed(1)} ms` : null);
+  const rankNode = root.querySelector('[data-node="rank"] .pl-title');
+  if (rankNode) rankNode.textContent = ordering && ordering !== "ltr" && !single ? ORDERING[ordering] || "Ranking" : (sys && sys.ranker && sys.ranker.loaded ? "Learned ranking" : "Ranking");
+  set("rank", single ? null : ordering === "ltr" ? `ordered ${fmtInt(c.candidates)} · ${ms("ranker").toFixed(1)} ms`
+    : ordering === "fusion" || ordering === "identifier_first" ? `short query · ${ms("fusion").toFixed(1)} ms` : ORDERING[ordering] || "");
+  const facts = e.confidence || {};
+  const verdict = facts.identifier_matches ? "exact identifier match" : r.no_strong_match ? "weak match" : `${r.confidence} confidence`;
+  set("evidence", `${r.results.length} results · ${verdict}`);
+}
+
+/* -- recorded accuracy (ledger) ---------------------------------------------------------------------------- */
+async function loadKpis() {
+  // Server-rendered from the ledger row (like the evaluation panel) and inserted verbatim: no number is built here.
+  try { $("kpis").innerHTML = await apiText("/v1/benchmarks/p0/headline"); }
+  catch (err) { $("kpis").innerHTML = `<div class="kpi-foot">Recorded accuracy unavailable: ${escapeHtml(err.message)}</div>`; }
+}
+
 /* -- P0 / P1 hit rendering --------------------------------------------------------------------------------- */
-const STAGES = { route: ["route", "--stage-route"], route_encode: ["encode", "--stage-encode"], encode: ["encode", "--stage-encode"],
-  encode_wait: ["queued for the model", "--stage-wait"], dense: ["dense", "--stage-dense"], bm25: ["BM25", "--stage-bm25"],
-  features: ["features", "--stage-features"], ranker: ["learned ranker", "--stage-ranker"], fusion: ["weighted fusion", "--stage-fusion"],
-  encode2: ["encode (2nd encoder)", "--stage-encode"], dense2: ["dense (2nd encoder)", "--stage-dense"], symbols: ["exact symbols", "--stage-bm25"] };
+const STAGES = { route: ["query analysis", "--stage-route"], route_encode: ["encode query", "--stage-encode"], encode: ["encode query", "--stage-encode"],
+  encode_wait: ["queued for the model", "--stage-wait"], dense: ["dense search", "--stage-dense"], bm25: ["BM25", "--stage-bm25"],
+  features: ["features", "--stage-features"], ranker: ["learned ranker", "--stage-ranker"], fusion: ["fusion", "--stage-fusion"],
+  encode2: ["encode (2nd encoder)", "--stage-encode"], dense2: ["dense search (2nd encoder)", "--stage-dense"], symbols: ["identifiers", "--stage-bm25"] };
 function renderTrace(t) {
   const merged = {};
   for (const [k, v] of Object.entries(t)) {
@@ -191,61 +296,111 @@ function renderTrace(t) {
     `<span class="step"><i style="background:var(${s.color})"></i>${escapeHtml(label)} ${s.ms.toFixed(1)} ms</span>`);
   return `<span class="trace">${steps.join('<span class="arrow">→</span>')}</span>`;
 }
+/* Names the unit defines, read from its stored text for display (the ranking never sees this). */
+function definedNames(source) {
+  const out = [];
+  for (const m of source.matchAll(/^[ \t]*(?:async[ \t]+)?(def|class)[ \t]+([A-Za-z_]\w*)/gm)) {
+    const label = m[1] === "class" ? `class ${m[2]}` : `${m[2]}()`;
+    if (!out.includes(label)) out.push(label);
+  }
+  return out;
+}
+const CHANNEL_META = {
+  dense: { color: "c-dense", label: () => `Semantic · ${shortName((encoderOf("primary dense channel") || {}).name) || "dense"}`, rank: "dense_rank", found: "found_dense" },
+  dense2: { color: "c-dense2", label: () => `Semantic · ${shortName((encoderOf("second dense channel") || {}).name) || "encoder 2"}`, rank: "dense2_rank", found: "found_dense2" },
+  bm25: { color: "c-bm25", label: () => "Keywords · BM25", rank: "bm25_rank", found: "found_bm25" },
+  symbols: { color: "c-symbols", label: () => "Identifiers", rank: null, found: "found_symbols" },
+};
 function renderHits(target, hits, explanation) {
-  $(target).innerHTML = hits.map((h) => {
+  const e = explanation || {};
+  const active = (e.channels && e.channels.length ? e.channels : ["dense"]).filter((c) => CHANNEL_META[c]);
+  const single = e.channel === "dense" || e.channel === "lexical";
+  $(target).innerHTML = hits.map((h, i) => {
     const s = h.signals || {};
-    const chips = [];
-    if (s.dense_rank != null) chips.push(`<span class="badge accent" title="rank of this unit by embedding similarity over the whole snapshot">dense #${s.dense_rank}</span>`);
-    if (s.bm25_rank != null) chips.push(`<span class="badge" title="BM25 score ${s.bm25.toFixed(2)}">BM25 #${s.bm25_rank}</span>`);
-    else if (explanation && explanation.channel !== "dense") chips.push(`<span class="badge" title="not in BM25's top 100 for this query">BM25 —</span>`);
-    if (h.unit.version && h.unit.version !== "v0") chips.push(`<span class="badge">${escapeHtml(h.unit.version)}</span>`);
-    chips.push(`<span class="badge" title="content hash: the code below was re-read from the store by this hash (INV-1)">${escapeHtml(h.unit.body_hash.slice(0, 10))}</span>`);
-    const sim = s.similarity;
-    const simHtml = sim != null
-      ? `<div class="sim-value">${sim.toFixed(3)}</div><div class="sim-label" title="cosine between this query's embedding and this unit's. A per-query signal, not an accuracy measure.">cosine similarity</div><div class="bar"><span style="width:${Math.max(0, Math.min(1, sim)) * 100}%"></span></div>`
-      : `<div class="sim-label">no dense signal</div>`;
-    return `<article class="hit">
+    const names = definedNames(h.source);
+    const shown = names.slice(0, 4).map((n) => `<span class="fn">${escapeHtml(n)}</span>`).join("") + (names.length > 4 ? `<span class="unit-key">+${names.length - 4} more</span>` : "");
+    const title = `<div class="fns">${shown || '<span class="fn">program</span>'}<span class="unit-key">${escapeHtml(h.unit.key || h.unit.unit_id)}</span></div>`;
+    const sigs = [];
+    for (const ch of ["dense", "dense2", "bm25"]) {
+      const m = CHANNEL_META[ch]; const rank = s[m.rank];
+      if (rank == null) continue;
+      const on = s[m.found] === 1;
+      sigs.push(`<span class="sig ${on ? "on" : ""}" title="${on ? "retrieved by this channel for this query" : "outside this channel's candidate list; scored by it anyway"}"><i class="${m.color}"></i>${escapeHtml(m.label())} <b>#${rank}</b></span>`);
+    }
+    const matched = (e.hit_symbols || [])[i] || [];
+    if (matched.length) sigs.push(`<span class="sig on" title="identifiers from the query that this unit contains"><i class="c-symbols"></i>Identifiers · ${matched.slice(0, 4).map((x) => `<code>${escapeHtml(x)}</code>`).join(" ")}</span>`);
+    const found = active.filter((c) => s[CHANNEL_META[c].found] === 1);
+    const dots = single ? "" : active.map((c) => `<i class="${s[CHANNEL_META[c].found] === 1 ? "on" : ""}" title="${escapeHtml(CHANNEL_META[c].label())}"></i>`).join("");
+    const agree = single ? `<div class="label">single channel</div>`
+      : `<div class="dots">${dots}</div><div class="label">found by ${found.length} of ${active.length} channel${active.length > 1 ? "s" : ""}</div>`;
+    const tech = [
+      s.similarity != null ? `cosine <code>${s.similarity.toFixed(4)}</code>` : "",
+      s.similarity2 != null ? `cosine (2nd encoder) <code>${s.similarity2.toFixed(4)}</code>` : "",
+      s.bm25 != null ? `BM25 <code>${s.bm25.toFixed(2)}</code>` : "",
+      `content hash <code>${escapeHtml(h.unit.body_hash.slice(0, 16))}</code>`,
+      `${fmtInt(h.unit.n_bytes)} bytes`,
+      h.unit.version && h.unit.version !== "v0" && h.unit.version !== "-" ? `version <code>${escapeHtml(h.unit.version)}</code>` : "",
+    ].filter(Boolean).map((x) => `<span>${x}</span>`).join("");
+    return `<article class="hit ${i === 0 ? "top" : ""}">
       <div class="hit-head">
-        <div class="rank">${h.rank}</div>
-        <div><div class="title">${escapeHtml(h.unit.key || h.unit.unit_id)}</div><div class="chips">${chips.join("")}</div></div>
-        <div class="sim">${simHtml}</div>
+        <div class="rank" title="ACIS rank">${h.rank}</div>
+        <div>${title}<div class="signals">${sigs.join("")}</div></div>
+        <div class="agree">${agree}${i === 0 ? `<div class="conf">${confidenceBadge(RESPONSE_OF[target])}</div>` : ""}</div>
       </div>
       ${codeBlock(h.source)}
+      <div class="hit-tech">${tech}</div>
     </article>`;
   }).join("");
 }
+const RESPONSE_OF = {};
 function confidenceBadge(r) {
+  if (!r) return "";
   const e = r.explanation || {};
-  const basis = e.confidence_basis;
-  const title = basis ? escapeHtml(basis) : "";
   const facts = e.confidence || {};
-  if (facts.identifier_matches) return `<span class="badge good" title="${title}">exact identifier match · ${facts.identifier_matches} unit(s)</span>`;
+  const title = escapeHtml(e.confidence_basis || "");
+  if (facts.identifier_matches) return `<span class="badge good" title="${title}">exact identifier match</span>`;
   if (facts.calibrated === false) return `<span class="badge" title="${title}">confidence not calibrated</span>`;
-  if (r.no_strong_match) return `<span class="badge warn" title="${title}">weak match: treat these results as suggestions</span>`;
+  if (r.no_strong_match) return `<span class="badge warn" title="${title}">weak match</span>`;
   const kind = r.confidence === "high" ? "good" : r.confidence === "medium" ? "accent" : "warn";
-  const p = facts.p != null ? ` · est. P(top result relevant) ${Number(facts.p).toFixed(2)}` : "";
-  return `<span class="badge ${kind}" title="${title}">confidence ${escapeHtml(r.confidence)}${escapeHtml(p)}</span>`;
+  return `<span class="badge ${kind}" title="${title}">${escapeHtml(r.confidence)} confidence</span>`;
 }
+const CHANNEL_NAMES = () => ({
+  dense: shortName((encoderOf("primary dense channel") || {}).name) || "dense",
+  dense2: shortName((encoderOf("second dense channel") || {}).name) || "encoder 2",
+  bm25: "BM25", symbols: "identifiers",
+});
 function renderSummary(target, r, wallMs) {
   const e = r.explanation || {};
-  const rd = e.route_decision || {};
-  $(target).hidden = false;
   const c = e.candidates || {};
-  const channelNames = { dense: "dense", bm25: "BM25", dense2: e.second_encoder ? `dense · ${e.second_encoder.split("/").pop()}` : "dense 2", symbols: "exact symbols" };
-  const pool = c.candidates != null
-    ? `<span title="${escapeHtml(Object.entries(c).filter(([k]) => k.startsWith("from_")).map(([k, v]) => `${k.slice(5)}: ${v}`).join(" · "))}">candidates <b>${fmtInt(c.candidates)}</b> from ${(e.channels || []).map((ch) => `<span class="badge">${escapeHtml(channelNames[ch] || ch)}</span>`).join(" ")}</span>`
-    : "";
+  const names = CHANNEL_NAMES();
+  const ordering = e.ordering || e.channel;
+  $(target).hidden = false;
+  const from = (e.channels || []).map((ch) => names[ch] || ch).join(", ");
   $(target).innerHTML = [
-    `<span>ordered by <b>${escapeHtml(e.ordered_by || "-")}</b></span>`,
-    `<span title="${escapeHtml(rd.reason || "")}">route <span class="badge">${escapeHtml(r.route)}</span></span>`,
-    e.category ? `<span>category <span class="badge accent">${escapeHtml(e.category.replace(/_/g, " "))}</span></span>` : "",
-    (e.query_symbols || []).length ? `<span>symbols ${e.query_symbols.map((x) => `<code>${escapeHtml(x)}</code>`).join(" ")}</span>` : "",
-    pool,
-    confidenceBadge(r),
-    `<span><b>${r.timings_ms.total.toFixed(0)} ms</b> engine · ${wallMs.toFixed(0)} ms wall</span>`,
-    renderTrace(r.timings_ms),
+    `<span class="lead">${r.results.length} results</span>`,
+    `<span>ranked by <b>${escapeHtml(ORDERING[ordering] || e.ordered_by || "-")}</b></span>`,
+    c.candidates != null && !["dense", "lexical"].includes(e.channel) ? `<span>over <b>${fmtInt(c.candidates)}</b> candidates from <b>${escapeHtml(from)}</b></span>` : "",
+    `<span><b>${r.timings_ms.total.toFixed(0)} ms</b> in the engine</span>`,
     ...(r.degradations || []).map((d) => `<span class="badge bad" title="a fallback this request took">${escapeHtml(d)}</span>`),
   ].join("");
+  const tech = $(target.replace("summary", "tech"));
+  if (!tech) return;
+  const rd = e.route_decision || {};
+  const conf = e.confidence || {};
+  const rows = [
+    ["Stages", renderTrace(r.timings_ms)],
+    ["Ordered by", escapeHtml(e.ordered_by || "-")],
+    ["Query type", `${escapeHtml(r.route)}${rd.reason ? ` — ${escapeHtml(rd.reason)}` : ""}${e.category ? ` · category <code>${escapeHtml(e.category)}</code>` : ""}`],
+    ["Identifiers in query", (e.query_symbols || []).length ? e.query_symbols.map((x) => `<code>${escapeHtml(x)}</code>`).join(" ") : "none"],
+    ["Candidates", Object.entries(c).map(([k, v]) => `${escapeHtml(k.replace("from_", "from "))} ${fmtInt(v)}`).join(" · ") || "-"],
+    ["Confidence", `${escapeHtml(r.confidence)}${conf.p != null ? ` · calibrated P(top result relevant) ${Number(conf.p).toFixed(2)}` : ""}${e.confidence_basis ? ` — ${escapeHtml(e.confidence_basis)}` : ""}`],
+    ["Short-query fusion weight", e.generic_alpha != null ? `α = ${escapeHtml(e.generic_alpha)} (dense share)` : "not set"],
+    ["Encoder", escapeHtml(e.encoder || "-")],
+    ["Snapshot", `<code>${escapeHtml(r.snapshot.id)}</code> · ${escapeHtml(r.snapshot.version)}`],
+    ["Wall time", `${wallMs.toFixed(0)} ms (browser → server → browser)`],
+  ];
+  tech.hidden = false;
+  $(`${tech.id}-body`).innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
 }
 function renderContext(target, r, { expectRepo, versionsById }) {
   const snap = r.snapshot;
@@ -254,8 +409,8 @@ function renderContext(target, r, { expectRepo, versionsById }) {
   $(target).hidden = false;
   $(target).innerHTML = `<span>answered from ${repoLabel}</span>` +
     (snap.version && snap.version !== "v0" ? `<span>version <b>${escapeHtml(snap.version)}</b></span>` : "") +
-    `<span>snapshot <code>${escapeHtml(snap.id)}</code></span><span><b>${fmtInt(snap.n_units)}</b> units</span>` +
-    (owned ? `<span class="badge good" title="the snapshot that answered belongs to the corpus selected on this tab">matches the selection</span>`
+    `<span><b>${fmtInt(snap.n_units)}</b> units searched</span>` +
+    (owned ? `<span class="badge good" title="snapshot ${escapeHtml(snap.id)} belongs to the corpus selected on this tab">verified source</span>`
            : `<span class="badge bad">does not match the selection</span>`);
   return owned;
 }
@@ -269,15 +424,17 @@ async function searchP0(e) {
   try {
     const r = await api("/v1/search", { query, repo_id: "-", top_k: Number(ddValue("topk-search")) || 10, mode: segValue("channel"), explain: true });
     const wall = performance.now() - t0;
+    RESPONSE_OF["results-search"] = r;
     renderContext("context-search", r, { expectRepo: "-" });
     notice("notice-search", "warn", r.no_strong_match
-      ? "<b>No strong match.</b> The top results are only loosely related to the query by every signal the engine has. They are shown ranked, but treat them as suggestions."
+      ? "<b>No strong match.</b> Every signal the engine has rates these results as only loosely related to the query. They are shown ranked; treat them as suggestions."
       : "");
     renderHits("results-search", r.results, r.explanation);
     renderSummary("summary-search", r, wall);
-    setCorpus("search", `APPS P0 corpus · ${fmtInt(r.snapshot.n_units)} units`);
+    lightPipeline("pipeline", r);
+    setCorpus("search", `APPS corpus · ${fmtInt(r.snapshot.n_units)} units`);
     recordLatency(wall, r.timings_ms.total);
-  } catch (err) { showError("results-search", err); $("summary-search").hidden = true; $("context-search").hidden = true; }
+  } catch (err) { showError("results-search", err); $("summary-search").hidden = true; $("context-search").hidden = true; $("tech-search").hidden = true; }
   finally { $("go-search").disabled = false; }
 }
 
@@ -320,6 +477,7 @@ async function searchP1(e) {
       notice("notice-versions", "bad", `<b>Refusing to show these results:</b> the snapshot that answered (<code>${escapeHtml(r.snapshot.id)}</code>, repository <code>${escapeHtml(r.snapshot.repo_id)}</code>) is not a version of <code>${escapeHtml(repo)}</code>.`);
       $("results-versions").innerHTML = ""; $("summary-versions").hidden = true; return;
     }
+    RESPONSE_OF["results-versions"] = r;
     notice("notice-versions", "warn", r.no_strong_match ? "<b>No strong match</b> in this version. Results are shown ranked; treat them as suggestions." : "");
     renderHits("results-versions", r.results, r.explanation);
     renderSummary("summary-versions", r, wall);
@@ -330,11 +488,11 @@ async function searchP1(e) {
 }
 async function commit() {
   const repo = ddValue("repo-versions"); if (!repo) return;
-  const box = $("commit-result"); box.hidden = false; box.className = "commit-result"; box.textContent = "applying synthetic edits and building…";
+  const box = $("commit-result"); box.hidden = false; box.className = "commit-result"; box.textContent = "committing and rebuilding incrementally…";
   $("commit").disabled = true;
   try {
     const r = await api(`/v1/repos/${encodeURIComponent(repo)}/commit`, { edits: Number($("commit-edits").value), seed: Date.now() % 100000 });
-    box.innerHTML = `<b>${escapeHtml(r.version)}</b> (synthetic) searchable in <b>${r.seconds_searchable.toFixed(2)} s</b> · ` +
+    box.innerHTML = `<b>${escapeHtml(r.version)}</b> searchable in <b>${r.seconds_searchable.toFixed(2)} s</b> · ` +
       `<b>${r.units_new}</b> unit(s) embedded, ${fmtInt(r.units_reused)} reused of ${fmtInt(r.units_total)}<br>` +
       `<span class="muted">edited: ${r.changed.map(escapeHtml).join(", ") || "none"}</span>`;
     await loadVersions();
@@ -424,6 +582,7 @@ async function searchBonus(e) {
 
 /* -- P0 evaluation (recorded) ------------------------------------------------------------------------------ */
 const evalState = { offset: 0, limit: 25, total: 0 };
+const RECORDED_ORDER = { "ltr.applied": "learned ranking", "ltr.abstained": "semantic (ranker abstained)", "fusion.applied": "hybrid fusion", "fusion.identifier_first": "identifier match" };
 async function loadEvaluation() {
   $("load-eval").disabled = true;
   try {
@@ -444,9 +603,9 @@ async function loadEvalRows() {
     $("eval-next").disabled = evalState.offset + evalState.limit >= page.total;
     const rank = (v) => (v == null ? '<span class="badge warn">not in top 100</span>' : v <= 10 ? `<b>${v}</b>` : String(v));
     $("eval-rows").innerHTML = page.records.map((r) => `<tr data-q="${escapeHtml(r.query_id)}">
-      <td class="id">${escapeHtml(r.query_id)}</td><td>${escapeHtml(r.route.route)}</td><td>${escapeHtml(r.ordered_by)}</td>
+      <td class="id">${escapeHtml(r.query_id)}</td><td>${escapeHtml(RECORDED_ORDER[r.ordered_by] || r.ordered_by)}</td>
       <td>${rank(r.rank_full)}</td><td>${rank(r.rank_dense)}</td><td class="head">${escapeHtml(r.query_head)}</td></tr>`).join("");
-  } catch (err) { $("eval-rows").innerHTML = `<tr><td colspan="6" class="muted">${escapeHtml(err.message)}</td></tr>`; $("eval-count").textContent = ""; }
+  } catch (err) { $("eval-rows").innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(err.message)}</td></tr>`; $("eval-count").textContent = ""; }
 }
 async function showQuery(qid) {
   const box = $("eval-detail"); box.hidden = false; box.innerHTML = '<div class="muted">loading…</div>';
@@ -456,14 +615,69 @@ async function showQuery(qid) {
     const top = r.top10_full.map((d, i) => `<li class="${gold.has(d) ? "gold" : ""}"><span>${i + 1}.</span><span>${escapeHtml(d)}</span>${gold.has(d) ? "<span>relevant</span>" : ""}</li>`).join("");
     const goldCode = (r.gold_code || []).map((g) => g.available ? codeBlock(g.source, 16) : `<div class="muted">${escapeHtml(g.doc_id)} (P0 corpus not loaded)</div>`).join("");
     box.innerHTML = `<h3>Query <code>${escapeHtml(r.query_id)}</code> · fold ${r.fold}</h3>
-      <p class="muted">route <b>${escapeHtml(r.route.route)}</b> (${escapeHtml(r.route.reason)}), ordered by <b>${escapeHtml(r.ordered_by)}</b>.
-      Relevant document at rank <b>${r.rank_full ?? "beyond 100"}</b> in the served pipeline, <b>${r.rank_dense ?? "beyond 100"}</b> dense only.</p>
+      <p class="muted">Ranked by <b>${escapeHtml(RECORDED_ORDER[r.ordered_by] || r.ordered_by)}</b> (query type ${escapeHtml(r.route.route)}: ${escapeHtml(r.route.reason)}).
+      Relevant document at rank <b>${r.rank_full ?? "beyond 100"}</b> by ACIS, <b>${r.rank_dense ?? "beyond 100"}</b> by dense similarity alone.</p>
       <div class="detail-grid">
         <div><h3>Statement (first 600 characters of ${fmtInt(r.query_chars)})</h3><div class="statement">${escapeHtml(r.query_excerpt)}</div>
-          <h3 style="margin-top:14px">Served top 10</h3><ol class="toplist">${top}</ol></div>
+          <h3 style="margin-top:14px">ACIS top 10</h3><ol class="toplist">${top}</ol></div>
         <div><h3>Relevant document: ${r.gold.map((g) => `<code>${escapeHtml(g)}</code>`).join(" ")}</h3>${goldCode}</div>
       </div>`;
   } catch (err) { box.innerHTML = `<div class="error">${escapeHtml(err.message)}</div>`; }
+}
+
+/* -- Architecture tab (GET /v1/system) --------------------------------------------------------------------- */
+const kv = (pairs) => `<div class="kv">${pairs.filter(([, v]) => v !== null && v !== undefined && v !== "").map(([k, v]) => `<div><span>${escapeHtml(k)}</span><b>${v}</b></div>`).join("")}</div>`;
+function renderSystem() {
+  if (!sys) return;
+  renderPipeline("pipeline-system");
+  $("sys-models").innerHTML = sys.encoders.map((e) => {
+    const p = e.progress || {};
+    const done = p.stage === "queries" ? p.queries_done : p.corpus_done, total = p.stage === "queries" ? p.queries_total : p.corpus_total;
+    const bar = e.state !== "serving" && total ? `<div class="progress" title="${fmtInt(done)} of ${fmtInt(total)} ${escapeHtml(p.stage || "")} vectors computed"><span style="width:${(100 * done) / total}%"></span></div><div class="muted" style="margin:5px 0 0">${escapeHtml(p.stage || "")}: ${fmtInt(done)} of ${fmtInt(total)} computed${p.running ? "" : " · job not running"}. ${escapeHtml(e.reason || "")}</div>` : "";
+    return `<div class="model"><div class="model-head"><span class="model-name">${escapeHtml(e.name || e.key)}</span><span>${stateBadge(e) || ""}</span></div>
+      <div class="model-role">${escapeHtml(e.role)}</div>
+      ${kv([["parameters", millions(e.params)], ["dimensions", e.dim], ["max tokens", e.max_tokens], ["weights", e.size_mb ? `${fmtInt(Math.round(e.size_mb))} MB` : null],
+            ["licence", e.licence ? escapeHtml(e.licence) : null], ["commit", e.commit ? `<code>${escapeHtml(String(e.commit).slice(0, 10))}</code>` : null],
+            ["pooling", e.pooling ? escapeHtml(e.pooling) : null], ["instructions", e.instruction_aware === undefined ? null : e.instruction_aware ? "per query type" : "none"]])}
+      ${e.state !== "serving" && e.state !== "indexing" && e.reason && !bar ? `<div class="muted" style="margin:6px 0 0">${escapeHtml(e.reason)}</div>` : ""}${bar}</div>`;
+  }).join("");
+  const rk = sys.ranker || {};
+  $("sys-ranker").innerHTML = rk.loaded ? `${kv([["model", escapeHtml(rk.kind)], ["trees", rk.rounds], ["features", rk.features], ["trained on", `${fmtInt(rk.trained_on_queries)} queries`],
+      ["group dropout", rk.group_dropout != null ? `${Math.round(rk.group_dropout * 100)}%` : null], ["evaluated", "out of fold, 5 folds"]])}
+      <div class="feature-groups">${Object.entries(rk.groups || {}).map(([g, names]) => `<div><b>${escapeHtml(g)}</b>${names.map((n) => `<code>${escapeHtml(n)}</code>`).join(" ")}</div>`).join("")}</div>
+      <p class="muted" style="margin:10px 0 0">Candidates from every channel are scored on every signal; LambdaRank learns how to weigh them from 5,000 labelled dev queries. Group dropout during training keeps any single family of evidence from becoming load-bearing, so an unfamiliar query degrades gracefully.</p>`
+    : '<div class="muted">No ranker is loaded in this process.</div>';
+  $("sys-bakeoff").innerHTML = sys.bakeoff_html;   // server-rendered from the ledger rows, inserted verbatim
+  const lex = sys.lexical || {}, bm = lex.bm25 || {}, sy = lex.symbols || {}, cand = sys.candidates || {};
+  $("sys-lexical").innerHTML = kv([["BM25", escapeHtml(bm.method || "-")], ["k1 · b", `${bm.k1} · ${bm.b}`], ["tokenizer", escapeHtml(bm.tokenizer || "-")], ["stemmer", escapeHtml(bm.stemmer || "-")],
+    ["identifiers indexed", fmtInt(sy.distinct_symbols)], ["names defined", fmtInt(sy.defined_names)]]) +
+    `<p class="muted" style="margin:10px 0 0">The identifier channel matches code-shaped names in the query (<code>heapq.heappush</code>, <code>sum_intervals</code>, <code>UnionFind</code>) exactly against every identifier in the corpus, weighted by rarity.</p>` +
+    kv([["semantic top", cand.dense_k], ["BM25 top", cand.lexical_k], ["identifier top", cand.symbol_k], ["2nd encoder top", cand.aux_k || null], ["union cap", cand.union_cap]]);
+  const dv = sys.device || {};
+  $("sys-runtime").innerHTML = kv([["device", "CPU"], ["numeric profile", escapeHtml(dv.numeric_profile)], ["model threads", dv.threads], ["BLAS threads", dv.blas_threads],
+    ["GPU at query time", dv.gpu_at_query_time ? "yes" : "none"], ["network", dv.network_at_query_time ? "yes" : "none"],
+    ["corpus", sys.corpus.loaded ? `${fmtInt(sys.corpus.units)} units` : "not loaded"], ["config", `<code>${escapeHtml(sys.config_hash)}</code>`]]) +
+    `<p class="muted" style="margin:10px 0 0">${escapeHtml(sys.candidates.search)}.</p>`;
+}
+async function loadSystem() {
+  try {
+    sys = await api("/v1/system");
+    renderPipeline("pipeline");
+    renderSystem();
+    const channels = ["primary dense channel", "second dense channel"].map(encoderOf).filter((e) => e && e.state === "serving").map((e) => shortName(e.name));
+    $("pill-stack").textContent = [...channels, "BM25", "identifiers", sys.ranker.loaded ? "LambdaRank" : null].filter(Boolean).join(" + ");
+    $("pill-stack").classList.add("ok");
+    $("pill-profile").textContent = `CPU · ${sys.device.numeric_profile} · ${sys.device.threads} threads · offline`;
+  } catch (err) { $("pill-stack").textContent = `system view unavailable: ${err.message}`; $("pill-stack").classList.add("warn"); }
+}
+
+/* Deep links for a demo runbook: `#tab=system` opens a tab, `#q=<query>` runs that search on load. */
+function openFromFragment() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const tab = params.get("tab");
+  if (tab) { const button = document.querySelector(`.tab[data-view="${CSS.escape(tab)}"]`); if (button) button.click(); }
+  const q = params.get("q");
+  if (q) { $("q-search").value = q; $("form-search").requestSubmit(); }
 }
 
 /* -- start-up ---------------------------------------------------------------------------------------------- */
@@ -473,6 +687,7 @@ async function init() {
     document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${t.dataset.view}`));
     showCorpus();
     if (t.dataset.view === "evaluation" && !$("eval-panel").dataset.loaded) { $("eval-panel").dataset.loaded = "1"; loadEvaluation(); }
+    if (t.dataset.view === "system") loadSystem();
   }));
   bindSeg("channel"); bindSeg("evo-mode");
   $("form-search").addEventListener("submit", searchP0);
@@ -493,30 +708,29 @@ async function init() {
   dropdown("eval-filter", {
     options: [{ value: "all", label: "all queries" }, { value: "missed", label: "relevant doc not in top 10" },
       { value: "improved", label: "ranked higher than dense" }, { value: "worsened", label: "ranked lower than dense" },
-      { value: "generic", label: "routed generic" }],
+      { value: "generic", label: "short / non-statement queries" }],
     value: "all", onChange: () => { evalState.offset = 0; loadEvalRows(); },
   });
   dropdown("repo-versions", { options: [], onChange: loadVersions });
   dropdown("repo-evolution", { options: [], onChange: (repo) => setCorpus("evolution", `${repo} · all versions`) });
   dropdown("version-versions", { options: [] });
+  loadKpis();
   try {
     const [health, ready] = await Promise.all([api("/healthz"), api("/readyz")]);
-    const needed = ["repo_identity", "benchmarks_p0", "calibrated_confidence"];
+    const needed = ["repo_identity", "benchmarks_p0", "calibrated_confidence", "system_view", "hit_evidence"];
     const missing = needed.filter((f) => !(health.api_features || []).includes(f));
     if (missing.length) {
       document.querySelector("main").insertAdjacentHTML("afterbegin", `<div class="notice bad"><b>This server process is older than this page.</b> It was started before an upgrade and lacks: ${missing.map(escapeHtml).join(", ")}. Restart <code>acis serve</code>; until then some panels cannot show real values.</div>`);
     }
-    $("pill-encoder").textContent = health.encoder;
-    $("pill-encoder").classList.toggle("ok", !!health.submission_capable);
-    $("pill-encoder").classList.toggle("warn", !health.submission_capable);
-    $("pill-profile").textContent = `${health.numeric_profile} · ${health.threads} threads`;
-    setCorpus("search", ready.p0_corpus ? `APPS P0 corpus · ${fmtInt(ready.p0_units)} units` : null);
+    await loadSystem();
+    setCorpus("search", ready.p0_corpus ? `APPS corpus · ${fmtInt(ready.p0_units)} units` : null);
     const repos = health.repos || [];
     const preferred = repos.includes("apps-history") ? "apps-history" : repos[0];
     dropdown("repo-evolution", { options: repos, value: preferred });
     if (preferred) setCorpus("evolution", `${preferred} · all versions`);
     dropdown("repo-versions", { options: repos, value: preferred });
     if (preferred) await loadVersions();
-  } catch (err) { $("pill-encoder").textContent = `API unavailable: ${err.message}`; $("pill-encoder").classList.add("warn"); }
+    openFromFragment();
+  } catch (err) { $("pill-stack").textContent = `API unavailable: ${err.message}`; $("pill-stack").classList.add("warn"); }
 }
 init();

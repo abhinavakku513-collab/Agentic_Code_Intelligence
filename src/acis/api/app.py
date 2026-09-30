@@ -40,7 +40,7 @@ log = get_logger("acis.api")
 
 STATIC_DIR = Path(__file__).parent / "static"
 #: Capabilities the page relies on; bumped with the page, so a stale server process is detected, not guessed at.
-API_FEATURES = ("repo_identity", "benchmarks_p0", "calibrated_confidence")
+API_FEATURES = ("repo_identity", "benchmarks_p0", "calibrated_confidence", "system_view", "hit_evidence")
 TOKEN_ENV = "ACIS_API_TOKEN"
 #: `docs/spec/06` §1 assigns each error its status code; the API only translates.
 STATUS = {
@@ -295,6 +295,13 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
 
         return benchmarks.render_panel(benchmarks.latest_pipeline_runs())
 
+    @app.get("/v1/benchmarks/p0/headline", dependencies=guard, response_class=HTMLResponse)
+    def benchmark_p0_headline() -> str:
+        """The search tab's KPI strip as HTML, rendered from the same ledger row as the panel."""
+        from acis.api import benchmarks
+
+        return benchmarks.render_headline(benchmarks.latest_pipeline_runs())
+
     @app.get("/v1/benchmarks/p0/queries", dependencies=guard)
     def benchmark_p0_queries(only: str = "all", offset: int = 0, limit: int = 50) -> dict[str, Any]:
         from acis.api import benchmarks
@@ -321,6 +328,13 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
         record["gold_code"] = [code(d) for d in record.get("gold", [])]
         record["top10_full_code"] = [code(d) for d in record.get("top10_full", [])]
         return record
+
+    @app.get("/v1/system", dependencies=guard)
+    def system() -> dict[str, Any]:
+        """The architecture this process is actually running: models, channels, ranker, device, bake-off rows."""
+        from acis.api import system as system_view
+
+        return system_view.describe(engine)
 
     # -- operations -----------------------------------------------------------------------------------------------
     @app.get("/healthz", response_model=schemas.HealthOut)

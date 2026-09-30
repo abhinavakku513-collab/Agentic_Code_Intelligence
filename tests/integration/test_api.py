@@ -270,3 +270,40 @@ def test_health_lists_every_api_feature_the_page_requires(client):
     assert listed == list(API_FEATURES)
     needed = re.search(r"const needed = \[([^\]]+)\]", (STATIC_DIR / "app.js").read_text("utf-8")).group(1)
     assert {n.strip().strip('"') for n in needed.split(",")} <= set(listed)
+
+
+# -- the architecture view and the per-hit evidence the page shows --------------------------------------------------
+def test_the_system_view_reports_what_is_loaded_and_nothing_else(client):
+    body = client.get("/v1/system").json()
+    primary, second = body["encoders"]
+    assert primary["role"] == "primary dense channel" and primary["state"] == "serving"
+    # No second encoder is configured here, so it must not be reported as serving.
+    assert second["role"] == "second dense channel" and second["state"] != "serving"
+    assert body["device"]["gpu_at_query_time"] is False and body["device"]["network_at_query_time"] is False
+    assert body["ranker"]["loaded"] is False  # the default config ships no ranker
+    assert body["corpus"]["loaded"] is True and body["corpus"]["units"] == len(CORPUS)
+    assert isinstance(body["bakeoff_html"], str)
+
+
+def test_the_system_view_needs_the_token_when_one_is_set(client, monkeypatch):
+    monkeypatch.setenv("ACIS_API_TOKEN", "s3cret")
+    assert client.get("/v1/system").status_code == 401
+    assert client.get("/v1/system", headers={"authorization": "Bearer s3cret"}).status_code == 200
+
+
+def test_a_search_explains_which_stage_ordered_it_and_which_channels_found_each_hit(client):
+    body = client.post("/v1/search", json={"query": "dijkstra", "top_k": 3, "explain": True}).json()
+    e = body["explanation"]
+    assert e["ordering"] in {"ltr", "ltr_abstained", "identifier_first", "fusion", "dense", "lexical"}
+    assert len(e["hit_symbols"]) == len(body["results"])
+    by_key = {h["unit"]["key"]: (h, syms) for h, syms in zip(body["results"], e["hit_symbols"], strict=True)}
+    hit, symbols = by_key["d2"]
+    assert symbols == ["dijkstra"]  # the unit that contains the identifier the query names
+    assert hit["signals"]["n_channels"] == sum(v for k, v in hit["signals"].items() if k.startswith("found_"))
+
+
+def test_a_single_channel_search_says_so(client):
+    body = client.post(
+        "/v1/search", json={"query": "binary search", "mode": "dense", "top_k": 2, "explain": True}
+    ).json()
+    assert body["explanation"]["ordering"] == "dense"

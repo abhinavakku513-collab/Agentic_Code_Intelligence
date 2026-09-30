@@ -166,8 +166,13 @@ def test_an_artifact_path_outside_runs_eval_is_never_read(tmp_path, monkeypatch)
     row = (
         ledger.LedgerRowBuilder(kind="dev")
         .with_metrics({"ndcg_at_10": 0.5})
-        .with_fields(rung="p0-pipeline:full", system="full", split="train", artifact="runs/eval/../../secret.txt",
-                     artifact_sha256="0" * 64)
+        .with_fields(
+            rung="p0-pipeline:full",
+            system="full",
+            split="train",
+            artifact="runs/eval/../../secret.txt",
+            artifact_sha256="0" * 64,
+        )
         .build()
     )
     ledger.append(row)
@@ -175,3 +180,62 @@ def test_an_artifact_path_outside_runs_eval_is_never_read(tmp_path, monkeypatch)
     assert client.get("/v1/benchmarks/p0").json()["artifact"]["present"] is False
     assert client.get("/v1/benchmarks/p0/queries").status_code == 404
     assert "do not serve" not in client.get("/v1/benchmarks/p0/panel").text
+
+
+# -- the search tab's KPI strip and the architecture tab's bake-off table: same rule as the panel -----------------
+TILE = re.compile(r'data-metric="([a-z_0-9]+)" data-run="([^"]+)" data-value="([^"]+)"><div class="v">([0-9.]+)</div>')
+
+
+def test_every_headline_number_is_its_ledger_value(tmp_path, monkeypatch):
+    ids = _record(tmp_path, monkeypatch, full=0.7285631234567891, dense=0.7103459876543219)
+    html = _client(tmp_path, monkeypatch).get("/v1/benchmarks/p0/headline").text
+    rows = {json.loads(x)["run_id"]: json.loads(x) for x in (tmp_path / "ledger.jsonl").read_text("utf-8").splitlines()}
+    tiles = TILE.findall(html)
+    assert {m for m, *_ in tiles} == {"ndcg_at_10", "mrr_at_10", "recall_at_100"}  # hit@10 was not recorded here
+    for metric, run_id, value, text in tiles:
+        assert run_id == ids["full"]
+        assert float(value) == rows[run_id]["metrics"][metric]
+        assert text == f"{100.0 * rows[run_id]['metrics'][metric]:.2f}"
+    assert "5,000 queries" in html and ids["full"] in html
+
+
+def test_an_unrecorded_headline_says_not_measured(tmp_path, monkeypatch):
+    monkeypatch.setattr(ledger, "ledger_path", lambda: tmp_path / "ledger.jsonl")
+    html = _client(tmp_path, monkeypatch).get("/v1/benchmarks/p0/headline").text
+    assert "Not measured" in html and "data-value" not in html
+
+
+def test_the_page_inserts_headline_and_bakeoff_verbatim():
+    source = (STATIC_DIR / "app.js").read_text("utf-8")
+    assert '$("kpis").innerHTML = await apiText("/v1/benchmarks/p0/headline");' in source
+    assert '$("sys-bakeoff").innerHTML = sys.bakeoff_html;' in source
+
+
+def test_the_bakeoff_table_is_its_ledger_rows():
+    from acis.api.system import render_bakeoff
+
+    rows = [
+        {
+            "model": "a",
+            "name": "org/a",
+            "params": 149_000_000,
+            "ndcg_at_10": 0.7103456,
+            "mrr_at_10": 0.6745,
+            "n_queries": 5000,
+            "projected_cold_pass_hours": 2.58,
+            "run_id": "gate-aaa",
+        },
+        {
+            "model": "b",
+            "name": "org/b",
+            "params": 47_000_000,
+            "ndcg_at_10": 0.5394,
+            "mrr_at_10": 0.5087,
+            "n_queries": 5000,
+            "projected_cold_pass_hours": None,
+            "run_id": "gate-bbb",
+        },
+    ]
+    html = render_bakeoff(rows, selected="a")
+    assert "71.03" in html and "53.94" in html and "gate-aaa" in html and "gate-bbb" in html
+    assert 'data-value="0.7103456"' in html and html.count("selected</span>") == 1

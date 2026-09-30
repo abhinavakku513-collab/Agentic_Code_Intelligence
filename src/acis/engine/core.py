@@ -1128,6 +1128,7 @@ class AcisEngine(VersionedEngineMixin):
                 if explanation["candidates"].get(key)
             ]
             explanation["second_encoder"] = getattr(self.aux_encoder, "name", None) if self.aux_encoder_name else None
+            explanation["hit_symbols"] = self.matched_symbols(data, query, [d for d, _ in ranked])
         _STAGES.reset(token)
         total_ms = (time.perf_counter() - started) * 1000
         return SearchResponse(
@@ -1171,40 +1172,82 @@ class AcisEngine(VersionedEngineMixin):
                 s = float(scores[index[d]])
                 out[d]["similarity"] = s
                 out[d]["dense_rank"] = float(int((scores > s).sum()) + 1)
+        retrieve = self.config.section("retrieve")
+        dense_k = int(retrieve.get("dense_k", 100))
+        lexical_k = int(retrieve.get("lexical_k", 30))
+        for d in doc_ids:
+            rank = out[d].get("dense_rank")
+            out[d]["found_dense"] = float(rank is not None and rank <= dense_k)
         if data.lexical is not None and "lexical" not in data.missing:
-            for rank, (d, s) in enumerate(self._lexical_ranking(data, query, 100), start=1):
+            for rank, (d, s) in enumerate(self._lexical_ranking(data, query, max(100, lexical_k)), start=1):
                 if d in out:
                     out[d]["bm25"] = float(s)
                     out[d]["bm25_rank"] = float(rank)
+                    out[d]["found_bm25"] = float(rank <= lexical_k)
+        from acis.lexical.symbols import query_symbols  # noqa: PLC0415
+
+        symbols = query_symbols(query)
+        symbol_k = int(retrieve.get("symbol_k", 0))
+        if symbols and data.symbols is not None:
+            ranked = {d: r for r, (d, _) in enumerate(data.symbols.search(symbols, max(symbol_k, 1)), start=1)}
+            for d in doc_ids:
+                hits = data.symbols.hits(data.position(d), symbols)
+                if hits:
+                    out[d]["symbol_hits"] = float(hits)
+                out[d]["found_symbols"] = float(symbol_k > 0 and d in ranked)
+        aux_k = int(retrieve.get("aux_k", 0))
+        if data.aux_vectors is not None and self.aux_encoder is not None:
+            vector2 = self._aux_query_vector(data.snapshot.snapshot_id, query, route=route)
+            scores2 = exact_search(vector2.reshape(1, -1), data.aux_vectors)[0]
+            for d in doc_ids:
+                s2 = float(scores2[data.position(d)])
+                out[d]["similarity2"] = s2
+                out[d]["dense2_rank"] = float(int((scores2 > s2).sum()) + 1)
+                out[d]["found_dense2"] = float(aux_k > 0 and out[d]["dense2_rank"] <= aux_k)
+        for d in doc_ids:
+            out[d]["n_channels"] = float(sum(v for k, v in out[d].items() if k.startswith("found_")))
         return out
+
+    def matched_symbols(self, data: SnapshotData, query: str, doc_ids: Sequence[str]) -> list[list[str]]:
+        """Per hit, the query's code-shaped symbols the unit contains — display only, after the order is fixed."""
+        from acis.lexical.symbols import query_symbols  # noqa: PLC0415
+
+        symbols = query_symbols(query)
+        if not symbols or data.symbols is None:
+            return [[] for _ in doc_ids]
+        return [[s for s in symbols if s in data.symbols.symbols_of[data.position(d)]] for d in doc_ids]
 
     def _explain_order(self, requested: str, counters: Counters) -> dict[str, Any]:
         """Which stage produced the final order, from this request's own counters."""
         channel = requested if requested != "auto" else str(self.config.get("run.channel", "auto"))
         seen = counters.snapshot()
+        # `ordering` is the machine-readable name of the stage that produced the order; `ordered_by` says it in words.
         if channel == "hybrid":
             alpha = self.generic_alpha
             if seen.get("ltr.applied"):
-                ordered_by = "learned ranker over dense + BM25 candidates"
+                ordering, ordered_by = "ltr", "learned ranker over dense + BM25 candidates"
             elif seen.get("ltr.abstained"):
-                ordered_by = "dense (the ranker abstained: too little evidence fired)"
+                ordering, ordered_by = "ltr_abstained", "dense (the ranker abstained: too little evidence fired)"
             elif seen.get("fusion.identifier_first"):
+                ordering = "identifier_first"
                 ordered_by = (
                     "exact identifier matches first, then weighted fusion of dense + BM25 "
                     f"(α = {alpha:g}; generic route)"
                 )
             elif seen.get("fusion.applied"):
+                ordering = "fusion"
                 ordered_by = f"weighted fusion of dense + BM25 (α = {alpha:g}; generic route, the ranker stays off)"
             elif seen.get("fusion.untuned"):
-                ordered_by = "dense (generic route; no fusion weight has been tuned)"
+                ordering, ordered_by = "dense", "dense (generic route; no fusion weight has been tuned)"
             else:
-                ordered_by = "dense (no ranker loaded)"
+                ordering, ordered_by = "dense", "dense (no ranker loaded)"
         elif channel == "lexical":
-            ordered_by = "BM25"
+            ordering, ordered_by = "lexical", "BM25"
         else:
-            ordered_by = "dense"
+            ordering, ordered_by = "dense", "dense"
         return {
             "channel": channel,
+            "ordering": ordering,
             "ordered_by": ordered_by,
             "encoder": getattr(self.encoder, "name", "none"),
             "generic_alpha": self.generic_alpha,

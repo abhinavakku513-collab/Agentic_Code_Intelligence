@@ -29,7 +29,17 @@ from acis.core.paths import acis_root
 
 #: Ledger rungs written by `scripts/bench/eval_pipeline.py`.
 PIPELINE_RUNGS = ("p0-pipeline:full", "p0-pipeline:dense")
-METRICS_SHOWN = ("ndcg_at_10", "mrr_at_10", "recall_at_10", "recall_at_100", "ndcg_at_100", "mrr_at_100")
+METRICS_SHOWN = (
+    "ndcg_at_10",
+    "mrr_at_10",
+    "recall_at_10",
+    "recall_at_100",
+    "ndcg_at_100",
+    "mrr_at_100",
+    "hit_rate_at_1",
+    "hit_rate_at_5",
+    "hit_rate_at_10",
+)
 PROVENANCE = (
     "encoder",
     "encoder_commit",
@@ -192,6 +202,8 @@ LABELS = {
     "mrr_at_10": "MRR@10",
     "recall_at_10": "Recall@10",
     "recall_at_100": "Recall@100",
+    "hit_rate_at_1": "Hit@1",
+    "hit_rate_at_5": "Hit@5",
 }
 
 
@@ -255,9 +267,12 @@ def render_panel(runs: Mapping[str, Any]) -> str:
         ("Split", f"{_esc(runs.get('split'))} (dev) — {_esc(prov.get('decision_set'))}"),
         ("Dataset", _esc(prov.get("dataset"))),
         ("Encoder", f"{_esc(prov.get('encoder'))} @ <code>{_esc(str(prov.get('encoder_commit'))[:12])}</code>"),
+        ("Ranker", f"<code>{_esc(prov.get('ranker'))}</code> — {_esc(prov.get('ranker_protocol'))}"),
+        ("Code", ""),  # placeholder, filled below (kept in the primary list)
+    ]
+    technical = [
         ("Numeric profile", _esc(prov.get("numeric_profile"))),
         ("Config", f"<code>{_esc(prov.get('config'))}</code> · <code>{_esc(str(prov.get('config_hash'))[:12])}</code>"),
-        ("Ranker", f"<code>{_esc(prov.get('ranker'))}</code> — {_esc(prov.get('ranker_protocol'))}"),
         ("Routing", _esc(prov.get("route_protocol"))),
         (
             "Generic-route fusion α",
@@ -276,11 +291,12 @@ def render_panel(runs: Mapping[str, Any]) -> str:
             ),
         ),
         ("Ranking time", f"{float(prov.get('seconds', 0.0)):.0f} s for both systems"),
-        (
-            "Code",
-            f"<code>{_esc(str(full.get('git_sha'))[:12])}</code>"
-            + (" (uncommitted changes)" if full.get("dirty_tree") else ""),
-        ),
+    ]
+    code = f"<code>{_esc(str(full.get('git_sha'))[:12])}</code>" + (
+        " (uncommitted changes)" if full.get("dirty_tree") else ""
+    )
+    facts = [(k, code) if k == "Code" else (k, v) for k, v in facts]
+    facts += [
         ("Recorded", _esc(_iso(full.get("ts")))),
         ("Ledger rows", " · ".join(f"<code>{_esc(systems[s]['run_id'])}</code>" for s in order)),
     ]
@@ -297,6 +313,8 @@ def render_panel(runs: Mapping[str, Any]) -> str:
         f'<table class="eval-table"><thead><tr><th>Metric (points)</th>{head}</tr></thead>'
         f"<tbody>{''.join(body)}</tbody></table>{delta_html}"
         f'<dl class="facts">{"".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in facts)}</dl>'
+        '<details class="tech-panel"><summary>Technical provenance</summary>'
+        f'<dl class="facts tech-facts">{"".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in technical)}</dl></details>'
         f'<p class="muted">{_esc(runs.get("note", ""))}</p></div>'
     )
 
@@ -310,4 +328,46 @@ def _iso(ts: Any) -> str:
         return "unknown"
 
 
-__all__ = ["format_points", "latest_pipeline_runs", "per_query", "query_detail", "render_panel"]
+# -- the headline strip on the search tab, rendered once, server-side, from the same ledger row ---------------------
+HEADLINE = (
+    ("ndcg_at_10", "NDCG@10"),
+    ("mrr_at_10", "MRR@10"),
+    ("hit_rate_at_10", "Hit@10"),
+    ("recall_at_100", "Recall@100"),
+)
+
+
+def render_headline(runs: Mapping[str, Any]) -> str:
+    """The served pipeline's recorded accuracy as KPI tiles. Same rule as the panel: every value is the ledger
+    row's float formatted once by `format_points`, carrying its run id and exact value in `data-*` attributes."""
+    if not runs.get("available") or "full" not in runs.get("systems", {}):
+        return '<div class="kpi-foot"><b>Not measured.</b> No P0 pipeline evaluation is recorded in the ledger.</div>'
+    full = runs["systems"]["full"]
+    tiles = []
+    for key, label in HEADLINE:
+        value = full["metrics"].get(key)
+        if value is None:
+            continue
+        tiles.append(
+            f'<div class="kpi" data-metric="{key}" data-run="{_esc(full["run_id"])}" data-value="{float(value)!r}">'
+            f'<div class="v">{format_points(value)}</div><div class="k">{label}</div></div>'
+        )
+    boot = (full.get("bootstrap_vs_dense") or {}).get("ndcg_at_10") or {}
+    if boot:
+        tiles.append(
+            f'<div class="kpi lift" data-bootstrap="delta" data-value="{float(boot["delta"])!r}" '
+            f'title="paired bootstrap, 95 % CI [{float(boot["ci_low"]):+.2f}, {float(boot["ci_high"]):+.2f}]">'
+            f'<div class="v">{float(boot["delta"]):+.2f}<small>pt</small></div>'
+            '<div class="k">NDCG@10 vs dense only</div></div>'
+        )
+    verified = runs.get("ledger_chain_intact") and runs.get("artifact", {}).get("sha256_matches")
+    n = int(full.get("provenance", {}).get("n_queries") or 0)
+    tiles.append(
+        f'<div class="kpi-foot">APPS dev split · {n:,} queries · out of fold · '
+        f'ledger <code>{_esc(full["run_id"])}</code>'
+        f"{' · chain and artifact verified' if verified else ' · <b>integrity check failed</b>'}</div>"
+    )
+    return "".join(tiles)
+
+
+__all__ = ["format_points", "latest_pipeline_runs", "per_query", "query_detail", "render_headline", "render_panel"]

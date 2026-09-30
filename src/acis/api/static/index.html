@@ -17,13 +17,13 @@
     <svg class="logo" viewBox="0 0 32 32" aria-hidden="true"><rect x="2" y="2" width="28" height="28" rx="7" /><path d="M10 21l4-10 4 10M11.5 17.5h5M20 11v10" /></svg>
     <div>
       <div class="brand-name">ACIS</div>
-      <div class="brand-sub">Code retrieval · offline · CPU only</div>
+      <div class="brand-sub">Hybrid code retrieval · learned ranking · offline</div>
     </div>
   </div>
   <div class="status" id="status">
-    <span class="pill" id="pill-encoder" title="the embedding model loaded by this server">encoder …</span>
+    <span class="pill" id="pill-stack" title="retrieval channels and ranker this server is running">loading…</span>
     <span class="pill" id="pill-corpus" title="the corpus the current tab searches">corpus …</span>
-    <span class="pill" id="pill-profile">profile …</span>
+    <span class="pill" id="pill-profile" title="where every query is computed">device …</span>
     <button class="icon-btn" id="theme" type="button" title="switch light / dark theme" aria-label="switch theme">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path class="sun" d="M12 4V2m0 20v-2m8-8h2M2 12h2m13.66 5.66 1.41 1.41M4.93 4.93l1.41 1.41m11.32-1.41-1.41 1.41M6.34 17.66l-1.41 1.41M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z"/><path class="moon" d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
     </button>
@@ -34,33 +34,52 @@
   <button class="tab active" data-view="search" role="tab">Search <span class="tab-sub">P0 · APPS corpus</span></button>
   <button class="tab" data-view="versions" role="tab">Versions <span class="tab-sub">P1 · one pinned version</span></button>
   <button class="tab" data-view="evolution" role="tab">Evolution <span class="tab-sub">Bonus · every version</span></button>
-  <button class="tab" data-view="evaluation" role="tab">P0 evaluation <span class="tab-sub">recorded benchmark</span></button>
+  <button class="tab" data-view="evaluation" role="tab">Evaluation <span class="tab-sub">P0 · recorded benchmark</span></button>
+  <button class="tab" data-view="system" role="tab">Architecture <span class="tab-sub">models · channels · ranker</span></button>
 </nav>
 
 <main>
   <!-- P0 -->
   <section class="view active" id="view-search">
+    <div class="hero">
+      <div class="hero-text">
+        <h1>Describe a problem. Get the code that solves it.</h1>
+        <p>Every query runs through several independent retrieval channels, a candidate union and a learned ranker. Every result is stored code, re-read by its content hash: nothing is generated.</p>
+      </div>
+      <div class="kpis" id="kpis" aria-label="recorded P0 accuracy"></div>
+    </div>
+
     <form class="query" id="form-search">
-      <textarea id="q-search" rows="3" placeholder="Describe the code you need: a sentence, an identifier, or a whole problem statement. Ctrl/⌘+Enter searches."></textarea>
+      <textarea id="q-search" rows="3" placeholder="A sentence, an identifier, or a whole problem statement. Ctrl/⌘+Enter searches."></textarea>
       <div class="query-bar">
         <div class="seg" id="channel" role="radiogroup" aria-label="ranking">
-          <button type="button" data-value="auto" class="on" title="the served pipeline: dense + BM25 candidates, then the learned ranker (problem statements) or weighted fusion (everything else)">Auto</button>
-          <button type="button" data-value="dense" title="embedding similarity only">Dense</button>
-          <button type="button" data-value="lexical" title="BM25 only">BM25</button>
+          <button type="button" data-value="auto" class="on" title="the full ACIS pipeline: every channel, the candidate union and the learned ranking">ACIS full pipeline</button>
+          <button type="button" data-value="dense" title="one channel alone, for comparison: embedding similarity">Dense only</button>
+          <button type="button" data-value="lexical" title="one channel alone, for comparison: BM25 keywords">BM25 only</button>
         </div>
         <div class="field">results <div class="dd" id="topk-search" data-value="10"></div></div>
         <button class="primary" type="submit" id="go-search">Search</button>
       </div>
     </form>
+
+    <div class="pipeline" id="pipeline" aria-label="the retrieval pipeline this query ran through"></div>
+
     <div class="context" id="context-search" hidden></div>
     <div class="notice" id="notice-search" hidden></div>
     <div class="summary" id="summary-search" hidden></div>
+    <details class="tech-panel" id="tech-search" hidden><summary>Technical details</summary><div class="tech-body" id="tech-search-body"></div></details>
     <div class="results" id="results-search"></div>
-    <div class="empty" id="empty-search">Type a query and press <b>Search</b>. Every result is the stored code, re-read from the content store by hash: nothing is generated.</div>
+    <div class="empty" id="empty-search">Type a query and press <b>Search</b>. The pipeline above lights up with what each stage did for your query.</div>
   </section>
 
   <!-- P1 -->
   <section class="view" id="view-versions">
+    <div class="howto">
+      <div class="howto-step"><b>Content-addressed store</b><span>every unit stored once, by the hash of its bytes</span></div>
+      <div class="howto-step"><b>Immutable snapshot per version</b><span>a query sees exactly one version, never a mix</span></div>
+      <div class="howto-step"><b>Incremental build</b><span>only units whose content changed are embedded</span></div>
+      <div class="howto-step"><b>Atomic activation</b><span>rollback and crash recovery, no half-built index served</span></div>
+    </div>
     <div class="split">
       <div class="main-col">
         <form class="query" id="form-versions">
@@ -75,8 +94,9 @@
         <div class="context" id="context-versions" hidden></div>
         <div class="notice" id="notice-versions" hidden></div>
         <div class="summary" id="summary-versions" hidden></div>
+        <details class="tech-panel" id="tech-versions" hidden><summary>Technical details</summary><div class="tech-body" id="tech-versions-body"></div></details>
         <div class="results" id="results-versions"></div>
-        <div class="empty" id="empty-versions">Pick a repository and a version. Results come only from that version's snapshot (INV-2), and the page checks the answer came from the repository you picked.</div>
+        <div class="empty" id="empty-versions">Pick a repository and a version. Results come only from that version's snapshot, and the page checks the answer came from the repository you picked.</div>
       </div>
       <aside class="side-col">
         <div class="card">
@@ -85,11 +105,11 @@
           <div class="row-actions"><button id="rollback" class="ghost" type="button">Roll back active version</button></div>
         </div>
         <div class="card">
-          <h3>Synthetic commit <span class="badge warn">demo mutator</span></h3>
-          <p class="muted">Changes <b>N</b> units of the latest version with Apps-Evolve's synthetic edit operators (rename, constant, branch, comment, reformat, reorder) and builds the result as the next version. It demonstrates incremental rebuilds; it is <b>not</b> ingestion of a real commit. Real repositories are ingested with <code>acis ingest --kind git</code>.</p>
+          <h3>New commit <span class="badge">synthetic edits</span></h3>
+          <p class="muted">Changes <b>N</b> units of the latest version with Apps-Evolve's edit operators (rename, constant, branch, comment, reformat, reorder) and builds the result as the next version, timing how long until it is searchable. Real repositories are ingested with <code>acis ingest --kind git</code>.</p>
           <div class="row-actions">
             <label class="field">units <input id="commit-edits" type="number" min="1" max="50" value="3" /></label>
-            <button id="commit" class="primary" type="button">Apply synthetic edits</button>
+            <button id="commit" class="primary" type="button">Commit and rebuild</button>
           </div>
           <div id="commit-result" class="commit-result" hidden></div>
         </div>
@@ -99,6 +119,11 @@
 
   <!-- Bonus -->
   <section class="view" id="view-evolution">
+    <div class="howto">
+      <div class="howto-step"><b>Search every version at once</b><span>unique contents only, each embedded once</span></div>
+      <div class="howto-step"><b>Lineage alignment</b><span>revisions of one unit linked by evidence: exact, moved, edited</span></div>
+      <div class="howto-step"><b>One answer per lineage</b><span>its best revision, plus the unit's history as a timeline</span></div>
+    </div>
     <form class="query" id="form-evolution">
       <textarea id="q-evolution" rows="2" placeholder="Search every version at once."></textarea>
       <div class="query-bar">
@@ -113,23 +138,19 @@
     <div class="context" id="context-evolution" hidden></div>
     <div class="summary" id="summary-evolution" hidden></div>
     <div class="results" id="results-evolution"></div>
-    <div class="empty" id="empty-evolution">Grouped: each unit once, at its best revision, with its history across versions (the lineage index). Flat: every revision that matched, so the duplicates grouping removes are visible.</div>
+    <div class="empty" id="empty-evolution">Grouped: each unit once, at its best revision, with its history across versions. Flat: every revision that matched, so you can see the duplicates grouping removes.</div>
   </section>
 
   <!-- P0 evaluation -->
   <section class="view" id="view-evaluation">
     <div class="eval-head">
       <div>
-        <h2>P0 evaluation <span class="badge">recorded, not live</span></h2>
-        <p class="muted">NDCG@10 and MRR@10 of the served pipeline on the APPS dev split, exactly as the ledger recorded them. This page computes nothing: the table below is rendered from the ledger row, and the per-query records come from the artifact that row pins by SHA-256. A search's cosine similarity is a different quantity and never appears here.</p>
+        <h2>P0 evaluation <span class="badge">from the ledger</span></h2>
+        <p class="muted">NDCG@10, MRR@10 and hit rates of the served pipeline on the APPS dev split: 5,000 queries, each ranked by a model that never saw it (out of fold). The table is rendered from the ledger row, and the per-query records come from the artifact that row pins by SHA-256. This page computes nothing.</p>
       </div>
-      <button class="primary" id="load-eval" type="button">Load recorded evaluation</button>
+      <button class="ghost" id="load-eval" type="button">Reload</button>
     </div>
-    <div id="eval-panel" class="card eval-card"><div class="muted">Not loaded yet.</div></div>
-    <div class="card">
-      <h3>Re-run it</h3>
-      <p class="muted">Evaluation reads labels, so it is not reachable over the network (spec 06 §1). From a terminal: <code>uv run python scripts/bench/eval_pipeline.py</code> (all 5,000 dev queries, out of fold; minutes with cached vectors). It appends a ledger row, which this page then shows. The held-out TEST labels are never read.</p>
-    </div>
+    <div id="eval-panel" class="card eval-card"><div class="muted">Loading…</div></div>
     <div class="card">
       <div class="per-query-head">
         <h3>Per query</h3>
@@ -137,9 +158,43 @@
         <span class="muted" id="eval-count"></span>
         <span class="pager"><button class="ghost" id="eval-prev" type="button">‹ prev</button><button class="ghost" id="eval-next" type="button">next ›</button></span>
       </div>
-      <div class="table-wrap"><table class="qtable"><thead><tr><th>query</th><th>route</th><th>ordered by</th><th title="rank of the relevant document, served pipeline">rank</th><th title="rank of the relevant document, dense only">dense</th><th>statement</th></tr></thead><tbody id="eval-rows"></tbody></table></div>
+      <div class="table-wrap"><table class="qtable"><thead><tr><th>query</th><th>ranked by</th><th title="rank of the relevant document, served pipeline">ACIS rank</th><th title="rank of the relevant document, dense only">dense only</th><th>statement</th></tr></thead><tbody id="eval-rows"></tbody></table></div>
     </div>
     <div class="card" id="eval-detail" hidden></div>
+    <div class="card">
+      <h3>Reproduce it</h3>
+      <p class="muted">Evaluation reads labels, so it is not reachable over the network. From a terminal: <code>uv run python scripts/bench/eval_pipeline.py</code> (all 5,000 dev queries, out of fold). It appends a ledger row, which this page then shows. The held-out TEST labels are never read by it.</p>
+    </div>
+  </section>
+
+  <!-- Architecture -->
+  <section class="view" id="view-system">
+    <div class="eval-head">
+      <div>
+        <h2>Architecture <span class="badge">live from this server</span></h2>
+        <p class="muted">Everything below is read from the running engine, the pinned model cards and the ledger: what is loaded, how large it is, and what it measured.</p>
+      </div>
+    </div>
+    <div class="pipeline pipeline-lg" id="pipeline-system"></div>
+    <div class="grid-2">
+      <div class="card"><h3>Models</h3><div id="sys-models"></div></div>
+      <div class="card"><h3>Learned ranking</h3><div id="sys-ranker"></div></div>
+    </div>
+    <div class="card"><h3>Encoder selection <span class="badge">gate G-M · all 5,000 dev queries</span></h3><div id="sys-bakeoff"></div></div>
+    <div class="grid-2">
+      <div class="card"><h3>Lexical and identifier channels</h3><div id="sys-lexical"></div></div>
+      <div class="card"><h3>Runtime</h3><div id="sys-runtime"></div></div>
+    </div>
+    <div class="card"><h3>Guarantees <span class="badge">each enforced by automated tests</span></h3>
+      <ul class="guarantees">
+        <li><b>No generation.</b> Every result is stored code, re-read from the content store by its hash.</li>
+        <li><b>Exact search.</b> The dense channels score every unit (one matrix product), with no approximate index to miss one.</li>
+        <li><b>Version isolation.</b> A query is answered from exactly one immutable snapshot; caches are keyed by snapshot and config.</li>
+        <li><b>Batch invariance and determinism.</b> A query's ranking never depends on other queries; same inputs give the same ranking.</li>
+        <li><b>Offline.</b> No network, no API keys, no GPU at query time.</li>
+        <li><b>Honest evaluation.</b> Rankers are scored out of fold; every metric shown here cites its ledger row, and the ledger is hash-chained.</li>
+      </ul>
+    </div>
   </section>
 </main>
 
