@@ -38,9 +38,6 @@ from acis.eval.bootstrap import paired_bootstrap
 from acis.eval.dev_task import dev_qrels
 from acis.eval.metrics import K_VALUES, per_query, score_run
 from acis.eval.splits import fold_members
-from acis.features.query import bridge as bridge_features
-from acis.features.query import extract as query_features
-from acis.rank import candidates as cand
 from acis.rank import ltr
 from acis.rank.compose import rank_derived_scores
 
@@ -59,7 +56,8 @@ def build_groups(
 ):
     """One training group per query: the candidate union, its features, and the label from the dev qrels.
 
-    `texts` overrides a query's text (G-OOD perturbations); its label stays the dev label of the original.
+    `texts` overrides a query's text (G-OOD perturbations); its label stays the dev label of the original. The pool
+    sizes are the engine's configuration (`retrieve.*`); the keyword arguments are kept for older callers.
     """
     data = engine.snapshot_data(snapshot)
     queries = {**apps.load_queries(), **(texts or {})}
@@ -75,21 +73,11 @@ def build_groups(
         normalised, _ = engine.normalise_query(text)
         route = engine.route(normalised)
         routes[qid] = route
-        dense = engine._dense_ranking(data, normalised, route=route, k=max(dense_k, 100))
-        lexical = engine._lexical_ranking(data, normalised, lexical_k)
-        pool = cand.union(dense, lexical, dense_k=dense_k, lexical_k=lexical_k, cap=cap)
-
-        qf = query_features(normalised)
-        bridge = {c.doc_id: bridge_features(qf, data.features_of(c.doc_id)) for c in pool}
-        meta = {
-            c.doc_id: {
-                "n_tokens": data.features_of(c.doc_id).n_tokens,
-                "parse_ok": data.features_of(c.doc_id).parse_ok,
-                "dup_cluster_size": data.duplicate_count(c.doc_id),
-            }
-            for c in pool
-        }
-        matrix = cand.feature_matrix(pool, bridge=bridge, query_tokens=qf.n_tokens, doc_meta=meta)
+        # The engine's own stages 3-7: candidate union over every configured channel, exact scores, PRF, features.
+        # Training on anything else would be a train/serve skew the numbers could not show.
+        dense, pool = engine.candidate_pool(data, normalised, route=route, want=100)
+        pool = engine._with_prf(data, normalised, route=route, pool=pool)
+        matrix = engine.pool_features(data, normalised, pool)
         gold = {d for d, rel in qrels.get(qid, {}).items() if rel > 0}
         labels = np.array([1 if c.doc_id in gold else 0 for c in pool], dtype=np.int32)
         groups.append(ltr.TrainingGroup(qid, matrix, labels, tuple(c.doc_id for c in pool)))

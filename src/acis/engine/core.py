@@ -74,6 +74,10 @@ class SnapshotData:
     lexical: Bm25Index | None = None
     vectors: np.ndarray | None = None
     missing: tuple[str, ...] = ()
+    #: Exact-symbol inverted index (`acis.lexical.symbols`), built with the snapshot.
+    symbols: Any = None
+    #: The second dense encoder's document matrix (`model.aux_encoder`), when one is configured.
+    aux_vectors: np.ndarray | None = None
     #: Parse-only document features, built once per snapshot on first use (Phase 4). Keyed by body hash, so
     #: duplicate documents — and the same body in another version — are parsed once.
     _features: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -224,6 +228,9 @@ class AcisEngine(VersionedEngineMixin):
         #: The confidence calibration (`confidence.calibration`); loaded once, `None` when not configured.
         self._calibration: Any = None
         self._calibration_loaded = False
+        #: The second dense encoder (`model.aux_encoder`, spec 08 §3 L10), built once when configured.
+        self._aux_encoder: Any = None
+        self._aux_loaded = False
 
     # -- construction ------------------------------------------------------------------------------------------
     @classmethod
@@ -297,6 +304,12 @@ class AcisEngine(VersionedEngineMixin):
         )
         vectors = self._embed_documents([store[h] for h in body_hashes]) if self.encoder is not None else None
         missing: tuple[str, ...] = () if vectors is not None else ("dense",)
+        aux_vectors = self._embed_aux([store[h] for h in body_hashes])
+        if self.aux_encoder_name and aux_vectors is None:
+            missing = (*missing, "dense2")
+        from acis.lexical.symbols import SymbolIndex  # noqa: PLC0415
+
+        symbols = SymbolIndex.build(doc_ids, [store[h] for h in body_hashes])
         if lexical.vocabulary_empty:
             # Nothing in this corpus is indexable lexically. The snapshot says so rather than pretending to have
             # a channel that can only ever return nothing.
@@ -323,6 +336,8 @@ class AcisEngine(VersionedEngineMixin):
             lexical=lexical,
             vectors=vectors,
             missing=missing,
+            symbols=symbols,
+            aux_vectors=aux_vectors,
         )
         self.counters.incr("snapshot.builds")
         self.counters.incr("snapshot.build_ms", int((time.perf_counter() - started) * 1000))
@@ -348,6 +363,68 @@ class AcisEngine(VersionedEngineMixin):
         ]
         assert self.encoder is not None
         return self.encoder.encode(prepared, is_query=False)
+
+    @property
+    def aux_encoder_name(self) -> str:
+        return str(self.config.get("model.aux_encoder", "") or "")
+
+    @property
+    def aux_encoder(self) -> Any:
+        """The second dense encoder named by `model.aux_encoder`, loaded once (the same pinned registry and
+        vector cache as the primary). `None` when not configured, or when its weights are absent (counted)."""
+        if self._aux_loaded:
+            return self._aux_encoder
+        self._aux_loaded = True
+        name = self.aux_encoder_name
+        if name and self.encoder is not None:
+            from acis.embed.factory import build_encoder  # noqa: PLC0415
+
+            try:
+                self._aux_encoder = build_encoder(self.config.with_overrides(**{"model.encoder": name}))
+            except Exception:  # noqa: BLE001 — a missing second encoder is a missing channel, never a crash
+                self.counters.incr("dense2.unavailable")
+                self._aux_encoder = None
+        return self._aux_encoder
+
+    def _embed_aux(self, texts: Sequence[str]) -> np.ndarray | None:
+        encoder = self.aux_encoder
+        if encoder is None:
+            return None
+        prep = self.config.section("prep").get("doc", {})
+        prepared = [
+            head_tail(
+                t,
+                max_tokens=int(prep.get("max_tokens", 1024)),
+                head=int(prep.get("head", 768)),
+                tail=int(prep.get("tail", 256)),
+            ).text
+            for t in texts
+        ]
+        return np.asarray(encoder.encode(prepared, is_query=False), dtype=np.float32)
+
+    def _aux_query_vector(self, snapshot_id: str, query: str, *, route: str) -> np.ndarray:
+        """The query under the second encoder — its own instruction per route when its card has one (INV-15)."""
+        encoder = self.aux_encoder
+        assert encoder is not None
+        texts = query_encoder_texts(self.config, query)
+        key = hash_obj(
+            {
+                "snapshot": snapshot_id,
+                "config": self.config_hash,
+                "aux": encoder.fingerprint,
+                "route": route,
+                "text": "\x00".join(texts),
+            }
+        )
+        cached = self._query_vector_cache.get(key)
+        if cached is not None:
+            return cached
+        with stage("encode2"):
+            vector = pooled_query_vector(
+                np.asarray(encoder.encode(list(texts), is_query=True, route=route), dtype=np.float32)
+            )
+        self._query_vector_cache[key] = vector
+        return vector
 
     # -- query preparation --------------------------------------------------------------------------------------
     def normalise_query(self, text: str) -> tuple[str, bool]:
@@ -565,8 +642,62 @@ class AcisEngine(VersionedEngineMixin):
         else:
             degradation("lexical_unavailable", "dense-only fusion", strict=strict, counters=counters or self.counters)
 
-        pool = cand.union(dense_order, lexical_order, dense_k=dense_k, lexical_k=lexical_k, cap=union_cap)
-        return dense_order, pool
+        aux_k = int(retrieve.get("aux_k", 0))
+        aux_order: list[tuple[str, float]] = []
+        if aux_k and data.aux_vectors is not None and self.aux_encoder is not None:
+            vector2 = self._aux_query_vector(data.snapshot.snapshot_id, query, route=route)
+            with stage("dense2"):
+                aux_order = self._stable_top_k(data, exact_search(vector2.reshape(1, -1), data.aux_vectors)[0], aux_k)
+        elif aux_k and self.aux_encoder_name:
+            # Configured but absent for this snapshot (e.g. a P1 snapshot built with one encoder): counted, visible.
+            (counters or self.counters).incr("dense2.missing")
+
+        symbol_k = int(retrieve.get("symbol_k", 0))
+        symbol_order: list[tuple[str, float]] = []
+        if symbol_k and data.symbols is not None:
+            from acis.lexical.symbols import query_symbols  # noqa: PLC0415
+
+            with stage("symbols"):
+                symbol_order = data.symbols.search(query_symbols(query), symbol_k)
+
+        pool = cand.union(
+            dense_order,
+            lexical_order,
+            dense_k=dense_k,
+            lexical_k=lexical_k,
+            cap=union_cap,
+            aux=aux_order,
+            aux_k=aux_k,
+            symbol=symbol_order,
+            symbol_k=symbol_k,
+        )
+        return dense_order, self._with_exact_scores(data, query, pool, route=route)
+
+    def _with_exact_scores(self, data: SnapshotData, query: str, pool: list[Any], *, route: str) -> list[Any]:
+        """Every candidate gets its exact cosine under each dense encoder, whichever channel retrieved it.
+
+        A unit only BM25 or the symbol channel found used to reach the ranker with no cosine at all: the one signal
+        that could confirm or refute the lexical match was missing exactly where it mattered. Ranks stay those of
+        the channels' own top lists (0 = not retrieved by that channel).
+        """
+        from dataclasses import replace as _replace  # noqa: PLC0415
+
+        if not pool or data.vectors is None or self.encoder is None:
+            return pool
+        rows = [data.position(c.doc_id) for c in pool]
+        primary = data.vectors[rows] @ self._query_vector(data.snapshot.snapshot_id, query, route=route)
+        secondary = None
+        if data.aux_vectors is not None and self.aux_encoder is not None:
+            secondary = data.aux_vectors[rows] @ self._aux_query_vector(data.snapshot.snapshot_id, query, route=route)
+        out = []
+        for i, c in enumerate(pool):
+            fields: dict[str, float] = {}
+            if c.dense_score != c.dense_score:
+                fields["dense_score"] = float(primary[i])
+            if secondary is not None and c.aux_score != c.aux_score:
+                fields["aux_score"] = float(secondary[i])
+            out.append(_replace(c, **fields) if fields else c)
+        return out
 
     @property
     def generic_alpha(self) -> float | None:
@@ -629,7 +760,36 @@ class AcisEngine(VersionedEngineMixin):
             }
             for c in pool
         }
-        return cand.feature_matrix(pool, bridge=bridge, query_tokens=qf.n_tokens, doc_meta=doc_meta)
+        return cand.feature_matrix(
+            pool,
+            bridge=bridge,
+            query_tokens=qf.n_tokens,
+            doc_meta=doc_meta,
+            symbols=self._symbol_features(data, query, pool),
+        )
+
+    @staticmethod
+    def _symbol_features(data: SnapshotData, query: str, pool: Sequence[Any]) -> dict[str, dict[str, float]]:
+        """Per candidate: how many of the query's symbols it contains, their share, and their summed IDF.
+
+        Empty (so NaN in the matrix) when the query names no symbol: "nothing to compare" is not "no match".
+        """
+        from acis.lexical.symbols import query_symbols  # noqa: PLC0415
+
+        symbols = query_symbols(query)
+        if not symbols or data.symbols is None:
+            return {}
+        idf = {s: data.symbols.idf(s) for s in symbols}
+        out = {}
+        for c in pool:
+            own = data.symbols.symbols_of[data.position(c.doc_id)]
+            matched = [s for s in symbols if s in own]
+            out[c.doc_id] = {
+                "symbol_hits": float(len(matched)),
+                "symbol_coverage": len(matched) / len(symbols),
+                "symbol_idf": float(sum(idf[s] for s in matched)),
+            }
+        return out
 
     def _hybrid_ranking(
         self,

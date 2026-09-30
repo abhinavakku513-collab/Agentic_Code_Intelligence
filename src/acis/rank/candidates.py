@@ -30,10 +30,16 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "lexical": ("bm25", "rank_lex", "bm25_norm", "rrf_prior"),
     "bridge": ("out_literal_recall", "numeric_literal_overlap", "const_jaccard", "io_shape_compat", "tc_loop_expected"),
     "meta": ("log_doc_tokens", "log_q_tokens", "len_ratio", "is_truncated", "parse_ok", "dup_cluster_size"),
+    # A second, heterogeneous dense encoder (spec 08 §3 L10): its own cosine, rank and within-pool z-score.
+    "dense2": ("cos2", "rank_dense2", "z_cos2"),
+    # Exact symbols the query names (`acis.lexical.symbols`); NaN when the query names none.
+    "symbol": ("symbol_hits", "symbol_coverage", "symbol_idf"),
+    # Agreement: in how many retrieval channels' own top lists the unit appeared.
+    "agree": ("n_channels",),
 }
 FEATURE_NAMES: tuple[str, ...] = tuple(name for names in GROUPS.values() for name in names)
 #: Monotone constraints: more similarity and more lexical match may never lower a score (spec 02 §4).
-MONOTONE = {"cos": 1, "bm25": 1}
+MONOTONE = {"cos": 1, "bm25": 1, "cos2": 1}
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +53,10 @@ class Candidate:
     lexical_rank: int = 0
     prf_score: float = NAN
     prf_rank: int = 0
+    aux_score: float = NAN
+    aux_rank: int = 0
+    symbol_score: float = NAN
+    symbol_rank: int = 0
     meta: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -62,29 +72,47 @@ def union(
     dense_k: int = 100,
     lexical_k: int = 30,
     cap: int = 100,
+    aux: Sequence[tuple[str, float]] = (),
+    aux_k: int = 0,
+    symbol: Sequence[tuple[str, float]] = (),
+    symbol_k: int = 0,
 ) -> list[Candidate]:
-    """Dense top-`dense_k` ∪ lexical top-`lexical_k`, cut to `cap` by reciprocal rank fusion.
+    """The union of every channel's top list, cut to `cap` by reciprocal rank fusion over all channels.
 
     RRF appears **only** at the cut: it decides which candidates survive when the union is too large, and never
-    what the final order is. That stays the ranker's job.
+    what the final order is. That stays the ranker's job (or the generic route's fusion).
     """
-    dense_ranks = {doc: i for i, (doc, _) in enumerate(dense[:dense_k], start=1)}
-    dense_scores = dict(dense[:dense_k])
-    lex_ranks = {doc: i for i, (doc, _) in enumerate(lexical[:lexical_k], start=1)}
-    lex_scores = dict(lexical[:lexical_k])
+    lists = {
+        "dense": list(dense[:dense_k]),
+        "lexical": list(lexical[:lexical_k]),
+        "aux": list(aux[:aux_k]),
+        "symbol": list(symbol[:symbol_k]),
+    }
+    ranks = {name: {doc: i for i, (doc, _) in enumerate(items, start=1)} for name, items in lists.items()}
+    scores = {name: dict(items) for name, items in lists.items()}
 
-    ordered = list(dense_ranks) + [d for d in lex_ranks if d not in dense_ranks]
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for name in ("dense", "lexical", "aux", "symbol"):
+        for doc, _ in lists[name]:
+            if doc not in seen:
+                seen.add(doc)
+                ordered.append(doc)
     if len(ordered) > cap:
-        ordered.sort(key=lambda d: -(reciprocal_rank(dense_ranks.get(d, 0)) + reciprocal_rank(lex_ranks.get(d, 0))))
+        ordered.sort(key=lambda d: -sum(reciprocal_rank(r.get(d, 0)) for r in ranks.values()))
         ordered = ordered[:cap]
 
     return [
         Candidate(
             doc_id=doc,
-            dense_score=dense_scores.get(doc, NAN),
-            dense_rank=dense_ranks.get(doc, 0),
-            lexical_score=lex_scores.get(doc, NAN),
-            lexical_rank=lex_ranks.get(doc, 0),
+            dense_score=scores["dense"].get(doc, NAN),
+            dense_rank=ranks["dense"].get(doc, 0),
+            lexical_score=scores["lexical"].get(doc, NAN),
+            lexical_rank=ranks["lexical"].get(doc, 0),
+            aux_score=scores["aux"].get(doc, NAN),
+            aux_rank=ranks["aux"].get(doc, 0),
+            symbol_score=scores["symbol"].get(doc, NAN),
+            symbol_rank=ranks["symbol"].get(doc, 0),
         )
         for doc in ordered
     ]
@@ -109,6 +137,7 @@ def feature_matrix(
     bridge: Mapping[str, Mapping[str, float]] | None = None,
     query_tokens: int = 0,
     doc_meta: Mapping[str, Mapping[str, Any]] | None = None,
+    symbols: Mapping[str, Mapping[str, float]] | None = None,
 ) -> np.ndarray:
     """`(n_candidates, len(FEATURE_NAMES))` float32, in `FEATURE_NAMES` order, `NaN` where a feature is absent."""
     if not candidates:
@@ -122,6 +151,7 @@ def feature_matrix(
 
     lexical_scores = [c.lexical_score for c in candidates]
     top_lex = max((v for v in lexical_scores if v == v), default=NAN)
+    z_aux = _standardise([c.aux_score for c in candidates])
 
     rows: list[list[float]] = []
     for index, candidate in enumerate(candidates):
@@ -156,6 +186,17 @@ def feature_matrix(
             "parse_ok": float(bool(doc["parse_ok"])) if doc.get("parse_ok") is not None else NAN,
             "dup_cluster_size": float(doc.get("dup_cluster_size", NAN)),
             **{name: float(bridge_row.get(name, NAN)) for name in GROUPS["bridge"]},
+            "cos2": candidate.aux_score,
+            "rank_dense2": float(candidate.aux_rank) if candidate.aux_rank else NAN,
+            "z_cos2": z_aux[index],
+            **{name: float((symbols or {}).get(candidate.doc_id, {}).get(name, NAN)) for name in GROUPS["symbol"]},
+            "n_channels": float(
+                sum(
+                    1
+                    for r in (candidate.dense_rank, candidate.lexical_rank, candidate.aux_rank, candidate.symbol_rank)
+                    if r
+                )
+            ),
         }
         rows.append([float(values.get(name, NAN)) for name in FEATURE_NAMES])
     return np.asarray(rows, dtype=np.float32)

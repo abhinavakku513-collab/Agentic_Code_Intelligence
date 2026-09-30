@@ -459,6 +459,13 @@ class VersionedEngineMixin:
         missing: tuple[str, ...] = () if vectors is not None else ("dense",)
         if lexical.vocabulary_empty:
             missing = (*missing, "lexical")
+        if getattr(self, "aux_encoder_name", ""):
+            # A stored snapshot holds the primary encoder's matrix only; the second dense channel is absent here
+            # and says so (the UI and `degradations` show it) rather than being silently skipped.
+            missing = (*missing, "dense2")
+        from acis.lexical.symbols import SymbolIndex  # noqa: PLC0415
+
+        symbol_index = SymbolIndex.build(doc_ids, [texts[h] for h in body_hashes])
         snapshot = Snapshot(
             snapshot_id=snapshot_id,
             repo_id=repo_id,
@@ -480,6 +487,7 @@ class VersionedEngineMixin:
             lexical=lexical,
             vectors=vectors,
             missing=missing,
+            symbols=symbol_index,
         )
 
     def _snapshot_of(self, repo_id: str, record: snapshots.SnapshotRecord) -> Snapshot:

@@ -75,20 +75,40 @@ class Ranker:
     rounds: int = 0
     meta: dict[str, Any] = field(default_factory=dict)
 
-    def score(self, features: np.ndarray) -> np.ndarray:
-        if features.shape[1] != len(self.feature_names):
+    def _columns(self, features: np.ndarray) -> np.ndarray:
+        """The model's own features, selected by name from the engine's full matrix.
+
+        The feature set grows (a second encoder, symbols); a model trained on fewer features keeps serving exactly
+        what it was trained on instead of failing — or worse, reading shifted columns. A model that asks for a
+        feature the matrix does not have is refused.
+        """
+        if features.shape[1] == len(self.feature_names) and tuple(self.feature_names) == FEATURE_NAMES:
+            return features
+        index = {name: i for i, name in enumerate(FEATURE_NAMES)}
+        missing = [n for n in self.feature_names if n not in index]
+        if missing or features.shape[1] != len(FEATURE_NAMES):
             raise InvalidInput(
                 "feature width does not match the trained model",
                 expected=len(self.feature_names),
                 got=int(features.shape[1]),
+                unknown=missing[:5],
             )
-        return np.asarray(self.booster.predict(features), dtype=np.float64)
+        return features[:, [index[n] for n in self.feature_names]]
+
+    def score(self, features: np.ndarray) -> np.ndarray:
+        return np.asarray(self.booster.predict(self._columns(features)), dtype=np.float64)
 
     def should_abstain(self, features: np.ndarray) -> bool:
-        """True when too little evidence fired for the model to add anything (spec 10 §5)."""
+        """True when too little evidence fired for the model to add anything (spec 10 §5).
+
+        Counted over the feature groups this model was trained with, so adding a group to the pipeline does not
+        move an older model's abstention threshold.
+        """
+        own = set(self.feature_names)
+        groups = {g: names for g, names in GROUPS.items() if set(names) <= own}
         availability = group_availability(features)
-        fired = sum(1 for value in availability.values() if value > 0.0)
-        return (fired / max(1, len(GROUPS))) < self.rho
+        fired = sum(1 for g in groups if availability.get(g, 0.0) > 0.0)
+        return (fired / max(1, len(groups))) < self.rho
 
     def rerank(self, doc_ids: Sequence[str], features: np.ndarray) -> tuple[list[str], bool]:
         """Return `(order, abstained)`. Abstaining returns the input order unchanged — the dense order."""
