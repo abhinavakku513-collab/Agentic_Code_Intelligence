@@ -47,8 +47,8 @@ Nothing is blocked *technically*: the `AcisEngine` interface is frozen, so Track
 - **P0 served pipeline** (one function for page and evaluation, `AcisEngine._rank_one`): routing v1.1 → gte dense
   (exact) + code BM25 + exact symbols → ≤ 500 candidates, each scored by every channel → LightGBM LambdaRank on
   statement-like queries / weighted dense+BM25 fusion (α 0.9, REG-tuned) elsewhere / identifier-first → dense tail.
-  Dev, 5,000 queries, out of fold: NDCG@10 74.13, MRR@10 70.93, R@100 94.86 `[ledger:dev-c78a92526701]`; dense
-  71.03 / 67.46 / 93.78 `[ledger:dev-854937ff7e9e]`. Candidate recall of the union 97.16 % `[ledger:dev-f320c5718b54]`.
+  Dev, 5,000 queries, out of fold: NDCG@10 74.13, MRR@10 70.93, R@100 94.86 `[ledger:dev-299a3010be5a]`; dense
+  71.03 / 67.46 / 93.78 `[ledger:dev-5bd4f1c50c7c]`. Candidate recall of the union 97.16 % `[ledger:dev-f320c5718b54]`.
 - **Implemented, not measured:** second dense encoder channel (Qwen3-Embedding-0.6B via `model.aux_encoder`) — its
   corpus vectors need the owner-run GPU tool environment (`scripts/train/gpu_env_setup.sh`) or ~14 h of CPU.
 - **Not integrated:** SPLADE (licences of mainstream checkpoints outside D4; the Apache-2.0 option needs a new card).
@@ -93,7 +93,7 @@ be restored (ADR-0004)
 | G3 adaptation (OOF) | pending | – | frozen base |
 | G-OOD arbitrary-query robustness | **8 of 9 families pass** (served pipeline, engine path) | `dev-e8304c8b6364` … `dev-19ccf584c73b` | format_noise fails its strict 0.0 limit (+0.12, CI [−0.30, +0.56]) |
 | G4 PRF | pending | – | off |
-| G5 ranker | measured (dev rows) | `dev-c78a92526701` | served pipeline 74.13 vs dense 71.03, +3.09 [+2.62, +3.57], out of fold, engine path |
+| G5 ranker | measured (dev rows) | `dev-299a3010be5a` | served pipeline 74.13 vs dense 71.03, +3.09 [+2.62, +3.57], out of fold, engine path |
 | G-AB Mode A vs B (OOF) | pending | – | A iff Δ ≥ +0.5 pt (CI>0), else B |
 | G6 numeric profile | pending | – | cpu-fp32 |
 | G7 invariants | pending | – | must pass |

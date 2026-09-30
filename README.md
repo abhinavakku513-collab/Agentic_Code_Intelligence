@@ -106,9 +106,9 @@ Every figure below is a ledger row (`runs/ledger.jsonl`, hash-chained). Numbers 
 
 | What | Result | Evidence |
 |---|---|---|
-| **P0 dev, served pipeline** (5,000 queries, out of fold, engine path) | **NDCG@10 74.13 · MRR@10 70.93 · Recall@100 94.86** | `[ledger:dev-c78a92526701]` |
-| P0 dev, dense only (same queries, same code) | NDCG@10 71.03 · MRR@10 67.46 · Recall@100 93.78 | `[ledger:dev-854937ff7e9e]` |
-| Served vs dense | +3.09 pt NDCG@10, 95 % CI [+2.62, +3.57] (paired bootstrap) | `[ledger:dev-c78a92526701]` |
+| **P0 dev, served pipeline** (5,000 queries, out of fold, engine path) | **NDCG@10 74.13 · MRR@10 70.93 · Recall@100 94.86** | `[ledger:dev-299a3010be5a]` |
+| P0 dev, dense only (same queries, same code) | NDCG@10 71.03 · MRR@10 67.46 · Recall@100 93.78 | `[ledger:dev-5bd4f1c50c7c]` |
+| Served vs dense | +3.09 pt NDCG@10, 95 % CI [+2.62, +3.57] (paired bootstrap) | `[ledger:dev-299a3010be5a]` |
 | Candidate recall (relevant unit in the union of ≤ 500) | 97.16 % (dense alone @500: 97.90 %, @100: 93.78 %) | `[ledger:dev-f320c5718b54]` |
 | Encoder bake-off (G-M) | `gte-modernbert-base` selected (71.03); granite-r2 56.70, granite-small-r2 53.95; Qwen3-0.6B excluded on its projected cold pass | `[ledger:gate-055152620da6]` |
 | Query prep sweep (G1, 9 cells) | V0/1024 71.03 best; the rule prefers the cheaper V0/512 (70.69, within 0.5 pt) — owner decision pending | `[ledger:gate-f736bd6e3a31]`, `[ledger:gate-afd311693e96]` |
@@ -187,8 +187,8 @@ uv run python scripts/bench/eval_pipeline.py        # the served pipeline, out o
 uv run python scripts/bench/recall_diagnostics.py   # candidate recall per channel
 ```
 
-The first reproduces `[ledger:dev-c78a92526701]` (NDCG@10 74.13, MRR@10 70.93) against dense
-`[ledger:dev-854937ff7e9e]` (71.03, 67.46) through `AcisEngine._rank_one`, the function the page calls. With vectors
+The first reproduces `[ledger:dev-299a3010be5a]` (NDCG@10 74.13, MRR@10 70.93) against dense
+`[ledger:dev-5bd4f1c50c7c]` (71.03, 67.46) through `AcisEngine._rank_one`, the function the page calls. With vectors
 cached it takes minutes; on a clean machine the corpus and queries are embedded first, which takes hours on a CPU.
 
 **Not verified yet, and not claimed:**
