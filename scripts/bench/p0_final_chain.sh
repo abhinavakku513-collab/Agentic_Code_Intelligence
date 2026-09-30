@@ -4,8 +4,8 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 export HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1
 RANKER=artifacts/ranker/p0-gte-pool500-symbols.txt
-echo "$(date -u +%FT%TZ) 1/4 shipped ranker: refit on all 5,000 dev pools (engine candidate_pool + pool_features)"
-uv run python scripts/bench/ltr_build.py --model gte-modernbert-base --tokenizer code --limit 0 --rounds 400 --save "$RANKER"
+if [ "${SKIP_REFIT:-0}" != 1 ]; then echo "$(date -u +%FT%TZ) 1/4 shipped ranker: refit on all 5,000 dev pools (engine candidate_pool + pool_features)"
+uv run python scripts/bench/ltr_build.py --model gte-modernbert-base --tokenizer code --limit 0 --rounds 400 --save "$RANKER"; fi
 echo "$(date -u +%FT%TZ) 2/4 P0 dev evaluation through the engine (out of fold)"
 uv run python scripts/bench/eval_pipeline.py
 echo "$(date -u +%FT%TZ) 3/4 REG: generic route, ranker vs fusion"
