@@ -52,6 +52,8 @@ CONFIGS: dict[str, dict[str, Any]] = {
 
 
 def run_config(name: str, overrides: dict[str, Any], *, base: str, routes: dict[str, str], rounds: int) -> dict:
+    overrides = dict(overrides)
+    rounds = int(overrides.pop("_rounds", rounds))  # ranker boosting rounds (spec 02 §4 allows 300-600)
     config = load_frozen_config(base).with_overrides(**overrides)
     engine = AcisEngine.from_config(config, encoder=build_encoder(config))
     snapshot = engine.build_snapshot(apps.load_corpus(), source=f"ladder:{name}")
@@ -99,7 +101,7 @@ def run_config(name: str, overrides: dict[str, Any], *, base: str, routes: dict[
     metrics = score_run(qrels, run, K_VALUES)
     return {
         "name": name,
-        "overrides": overrides,
+        "overrides": {**overrides, "_rounds": rounds},
         "config_hash": config.config_hash,
         "metrics": metrics,
         "pool_recall": float(np.mean([e["pool_hit"] for e in items.values()])),
