@@ -112,3 +112,37 @@ def test_the_lineage_index_is_rebuilt_when_a_version_is_added(repo):
     )
     after = engine.lineage_index("hist")
     assert after.size == before.size + 1  # the new unit is its own lineage, not a merge into an existing one
+
+
+def test_a_unit_deleted_after_v1_still_outranks_whatever_topped_the_later_versions(tmp_path):
+    """Found on the demo repository: every version was ranked on its own and the scores were rank positions, so in
+    the versions where the right unit had been deleted, the best of the rest scored exactly what the right unit
+    scored in v1 — and grouping broke the tie arbitrarily. Scores must be comparable across versions: the unique
+    contents of every version are ranked in one pass."""
+    versions = {
+        "v1": {
+            "target.py": "def knapsack_max_value(weights, values, capacity):\n    best = [0] * (capacity + 1)\n"
+            "    for w, v in zip(weights, values):\n        for c in range(capacity, w - 1, -1):\n"
+            "            best[c] = max(best[c], best[c - w] + v)\n    return best[capacity]\n",
+            "decoy.py": "def parse_config(path):\n    with open(path) as fh:\n        return fh.read().split()\n",
+        },
+        "v2": {"decoy.py": "def parse_config(path):\n    with open(path) as fh:\n        return fh.read().split()\n"},
+        "v3": {"decoy.py": "def parse_config(path):\n    with open(path) as fh:\n        return fh.read().split()\n"},
+    }
+    # The served configuration: the hybrid pipeline, whose scores are rank-derived (the dense-only default's cosines
+    # happen to be comparable across versions and hid the bug).
+    config = freeze_config(DEFAULT_CONFIG).with_overrides(**{"run.channel": "hybrid", "rank.generic": {"alpha": 0.9}})
+    engine = AcisEngine.from_config(config, encoder=HashingEncoder(dim=256))
+    engine.ingest(SourceSpec(kind="memory", location="deleted", options={"versions": versions}), repo_id="del")
+    response = engine.retrieve_evolution(
+        EvolveRequest(query="knapsack max value of weights and values within capacity", repo_id="del", top_k=5)
+    )
+    top, *rest = response.groups
+    assert top["best"]["key"] == "target.py" and top["span"] == ["v1", "v1"]
+    assert all(g["score"] < top["score"] for g in rest), [(g["best"]["key"], g["score"]) for g in response.groups]
+    flat = engine.retrieve_evolution(
+        EvolveRequest(
+            query="knapsack max value of weights and values within capacity", repo_id="del", top_k=5, flat=True
+        )
+    ).flat_results
+    assert flat[0].unit.key == "target.py"

@@ -239,3 +239,33 @@ def test_the_bakeoff_table_is_its_ledger_rows():
     html = render_bakeoff(rows, selected="a")
     assert "71.03" in html and "53.94" in html and "gate-aaa" in html and "gate-bbb" in html
     assert 'data-value="0.7103456"' in html and html.count("selected</span>") == 1
+
+
+def test_every_encoder_that_was_not_selected_says_why():
+    from acis.api.system import render_bakeoff
+
+    rows = [
+        {
+            "model": "a",
+            "name": "org/a",
+            "params": 149_000_000,
+            "ndcg_at_10": 0.71,
+            "mrr_at_10": 0.67,
+            "n_queries": 5000,
+            "projected_cold_pass_hours": 2.58,
+            "run_id": "gate-aaa",
+        },
+        {
+            "model": "b",
+            "name": "org/b",
+            "params": 47_000_000,
+            "ndcg_at_10": 0.54,
+            "mrr_at_10": 0.51,
+            "n_queries": 5000,
+            "projected_cold_pass_hours": 0.7,
+            "run_id": "gate-bbb",
+        },
+    ]
+    gate = {"decision": "a", "slo_cold_pass_hours": 4.0, "evidence": {"rejected": {"b": "17.09 pt behind the best"}}}
+    html = render_bakeoff(rows, selected="a", gate=gate)
+    assert "17.09 pt behind the best" in html and "inside the 4 h budget" in html and "Decision: a" in html

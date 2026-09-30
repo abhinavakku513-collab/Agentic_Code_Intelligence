@@ -184,13 +184,7 @@ function encoderOf(role) { return sys ? sys.encoders.find((e) => e.role === role
 function stateBadge(e) {
   if (!e) return "";
   if (e.state === "serving") return '<span class="pl-state serving">serving</span>';
-  if (e.state && e.state.startsWith("indexing")) {
-    const p = e.progress || {};
-    const done = p.stage === "queries" ? p.queries_done : p.corpus_done;
-    const total = p.stage === "queries" ? p.queries_total : p.corpus_total;
-    const pct = total ? ` ${Math.floor((100 * done) / total)}%` : "";
-    return `<span class="pl-state indexing" title="${escapeHtml(e.reason || "")}">${escapeHtml(e.state)}${pct}</span>`;
-  }
+  if (e.state === "optional") return `<span class="pl-state optional" title="${escapeHtml(e.reason || "")}">optional</span>`;
   return `<span class="pl-state off" title="${escapeHtml(e.reason || "")}">${escapeHtml(e.state || "off")}</span>`;
 }
 
@@ -634,15 +628,13 @@ function renderSystem() {
   if (!sys) return;
   renderPipeline("pipeline-system");
   $("sys-models").innerHTML = sys.encoders.map((e) => {
-    const p = e.progress || {};
-    const done = p.stage === "queries" ? p.queries_done : p.corpus_done, total = p.stage === "queries" ? p.queries_total : p.corpus_total;
-    const bar = e.state !== "serving" && total ? `<div class="progress" title="${fmtInt(done)} of ${fmtInt(total)} ${escapeHtml(p.stage || "")} vectors computed"><span style="width:${(100 * done) / total}%"></span></div><div class="muted" style="margin:5px 0 0">${escapeHtml(p.stage || "")}: ${fmtInt(done)} of ${fmtInt(total)} computed${p.running ? "" : " · job not running"}. ${escapeHtml(e.reason || "")}</div>` : "";
+    const note = e.state === "optional" ? `<div class="muted" style="margin:6px 0 0">Second semantic view of every query, instruction-aware per query type. ${escapeHtml(e.reason || "")}.</div>` : "";
     return `<div class="model"><div class="model-head"><span class="model-name">${escapeHtml(e.name || e.key)}</span><span>${stateBadge(e) || ""}</span></div>
       <div class="model-role">${escapeHtml(e.role)}</div>
       ${kv([["parameters", millions(e.params)], ["dimensions", e.dim], ["max tokens", e.max_tokens], ["weights", e.size_mb ? `${fmtInt(Math.round(e.size_mb))} MB` : null],
             ["licence", e.licence ? escapeHtml(e.licence) : null], ["commit", e.commit ? `<code>${escapeHtml(String(e.commit).slice(0, 10))}</code>` : null],
             ["pooling", e.pooling ? escapeHtml(e.pooling) : null], ["instructions", e.instruction_aware === undefined ? null : e.instruction_aware ? "per query type" : "none"]])}
-      ${e.state !== "serving" && e.state !== "indexing" && e.reason && !bar ? `<div class="muted" style="margin:6px 0 0">${escapeHtml(e.reason)}</div>` : ""}${bar}</div>`;
+      ${note}</div>`;
   }).join("");
   const rk = sys.ranker || {};
   $("sys-ranker").innerHTML = rk.loaded ? `${kv([["model", escapeHtml(rk.kind)], ["trees", rk.rounds], ["features", rk.features], ["trained on", `${fmtInt(rk.trained_on_queries)} queries`],
@@ -682,6 +674,10 @@ function openFromFragment() {
   if (tab) { const button = document.querySelector(`.tab[data-view="${CSS.escape(tab)}"]`); if (button) button.click(); }
   const q = params.get("q");
   const view = tab && ["versions", "evolution"].includes(tab) ? tab : "search";
+  const version = params.get("version");                 // `#tab=versions&version=v1&q=…` pins that version
+  if (view === "versions" && version && dropdowns["version-versions"].options.some((o) => o.value === version)) setValue("version-versions", version, false);
+  const mode = params.get("mode");                       // `#tab=evolution&mode=flat&q=…` shows every revision
+  if (view === "evolution" && ["grouped", "flat"].includes(mode)) document.querySelectorAll("#evo-mode button").forEach((b) => b.classList.toggle("on", b.dataset.value === mode));
   if (q) { $(`q-${view}`).value = q; $(`form-${view}`).requestSubmit(); }
 }
 

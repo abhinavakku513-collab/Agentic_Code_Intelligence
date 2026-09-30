@@ -220,28 +220,30 @@ class VersionedEngineMixin:
         resolution = selectors.resolve(req.repo_id, "all")
         index = self.lineage_index(req.repo_id)
 
-        per_version = max(req.top_k, 10)
-        hits: list[RevisionHit] = []
-        flat: list[Any] = []
+        # Unique-content search (D12): the distinct bodies of *every* version, ranked in **one** pass through the
+        # ordinary pipeline, so a score means the same thing whichever version a body came from. Ranking each
+        # version on its own gave rank-derived scores that are not comparable across versions: in a version where
+        # the right unit had been deleted, whatever came first there scored exactly what the right unit scored in
+        # the versions that had it, and grouping broke the tie arbitrarily.
         opened: dict[str, Any] = {}
         for label, snapshot_id in zip(resolution.labels, resolution.snapshot_ids, strict=True):
-            data = self.open_version(req.repo_id, f"snapshot:{snapshot_id}")
-            opened[label] = data
-            ranked = self._rank_one(data, req.query, top_k=per_version, strict=False)  # type: ignore[attr-defined]
-            for rank, (doc_id, score) in enumerate(ranked, start=1):
-                hits.append(
-                    RevisionHit(
-                        version=label,
-                        key=doc_id,
-                        body_hash=data.hash_of[doc_id],
-                        score=float(score),
-                        rank=rank,
-                    )
-                )
-                flat.append((label, doc_id, float(score), rank, data))
+            opened[label] = self.open_version(req.repo_id, f"snapshot:{snapshot_id}")
+        union = self._union_of(req.repo_id, resolution.snapshot_ids, opened)
+        where: dict[str, list[tuple[str, str]]] = {}  # body hash -> [(version, key)], in version order
+        for label, data in opened.items():
+            for key in data.doc_ids:
+                where.setdefault(data.hash_of[key], []).append((label, key))
+        want = min(union.size, max(100, 10 * req.top_k))
+        ranked = self._rank_one(union, req.query, top_k=want, strict=False)  # type: ignore[attr-defined]
+        hits: list[RevisionHit] = []
+        flat: list[Any] = []
+        for rank, (body, score) in enumerate(ranked, start=1):
+            for label, key in where.get(body, ()):
+                hits.append(RevisionHit(version=label, key=key, body_hash=body, score=float(score), rank=rank))
+                flat.append((label, key, float(score), rank, opened[label]))
 
         grouped = group(hits, index, prefer=str(req.filters.get("prefer", "best")), top_k=req.top_k)
-        flat.sort(key=lambda item: (-item[2], item[3]))
+        # Already in score order, and within one body in version order: every revision of the best body first.
         flat_hits = [
             Hit(
                 rank=position,
@@ -269,6 +271,78 @@ class VersionedEngineMixin:
                 f"versions={len(resolution.labels)}",
             ),
         )
+
+    def _union_of(self, repo_id: str, snapshot_ids: Sequence[str], opened: Mapping[str, Any]) -> SnapshotData:
+        """An in-memory snapshot of the distinct bodies across `snapshot_ids`, keyed by body hash.
+
+        Built from what the versions already hold — their texts and their stored vector rows — so nothing is
+        embedded again. Cached per exact set of snapshots (they are immutable, so the cache cannot go stale; a new
+        version is a new set), and dropped with the repository's other cached snapshots by `_forget`.
+        """
+        from acis.core.hashing import hash_obj, short  # noqa: PLC0415
+        from acis.engine.core import SnapshotData  # noqa: PLC0415 — the seam, not a cycle in practice
+        from acis.lexical.bm25 import Bm25Index  # noqa: PLC0415
+        from acis.lexical.tokenize import corpus_text  # noqa: PLC0415
+
+        key = (repo_id, "union:" + hash_obj(sorted(snapshot_ids)))
+        cached: SnapshotData | None = self._loaded.get(key)  # type: ignore[attr-defined]
+        if cached is not None:
+            return cached
+        texts: dict[str, str] = {}
+        rows: dict[str, np.ndarray] = {}
+        complete = True
+        for data in opened.values():
+            for position, doc_id in enumerate(data.doc_ids):
+                body = data.hash_of[doc_id]
+                if body in texts:
+                    continue
+                texts[body] = data.store[body]
+                if data.vectors is None:
+                    complete = False
+                else:
+                    rows[body] = np.asarray(data.vectors[position], dtype=np.float32)
+        bodies = list(texts)
+        lexical = Bm25Index.build(
+            bodies,
+            [corpus_text("", texts[b]) for b in bodies],
+            k1=float(self.config.get("lexical.k1", 1.5)),  # type: ignore[attr-defined]
+            b=float(self.config.get("lexical.b", 0.75)),  # type: ignore[attr-defined]
+            stemmer_language=self.config.get("lexical.stemmer", "english"),  # type: ignore[attr-defined]
+            tokenizer=str(self.config.get("lexical.tokenizer", "stock")),  # type: ignore[attr-defined]
+        )
+        vectors = np.stack([rows[b] for b in bodies]) if complete and bodies else None
+        missing: tuple[str, ...] = () if vectors is not None else ("dense",)
+        if lexical.vocabulary_empty:
+            missing = (*missing, "lexical")
+        if getattr(self, "aux_encoder_name", ""):
+            missing = (*missing, "dense2")
+        from acis.lexical.symbols import SymbolIndex  # noqa: PLC0415
+
+        snapshot = Snapshot(
+            snapshot_id="u_" + short(hash_obj(sorted(snapshot_ids)), 16),
+            repo_id=repo_id,
+            version_id="all",
+            n_units=len(bodies),
+            config_hash=str(self.config_hash),  # type: ignore[attr-defined]
+            source="union:" + ",".join(sorted(snapshot_ids)),
+            state="VALID",
+            missing_channels=missing,
+            created_ts=time.time(),
+        )
+        union = SnapshotData(
+            snapshot=snapshot,
+            doc_ids=tuple(bodies),
+            body_hashes=tuple(bodies),
+            store=texts,
+            ordinal={b: i for i, b in enumerate(bodies)},
+            hash_of={b: b for b in bodies},
+            lexical=lexical,
+            vectors=vectors,
+            missing=missing,
+            symbols=SymbolIndex.build(bodies, [texts[b] for b in bodies]),
+        )
+        self._loaded[key] = union  # type: ignore[attr-defined]
+        return union
 
     # -- comparison --------------------------------------------------------------------------------------------------
     def compare_versions(self, repo_id: str, a: str, b: str, *, query: str | None = None) -> VersionComparison:

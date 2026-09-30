@@ -83,23 +83,33 @@ def _second_encoder(engine: Any, p0: Any) -> dict[str, Any]:
         return _encoder_entry(engine.aux_encoder, role="second dense channel", key=key)
     entry = {**_card(key), "role": "second dense channel", "params": None, "dim": None}
     progress = _progress(key)
-    if progress:
+    if progress:  # kept in the API for operators; the page does not display it
         entry["progress"] = {
             k: progress.get(k)
             for k in ("stage", "corpus_done", "corpus_total", "queries_done", "queries_total", "updated", "running")
         }
-        entry["state"] = "indexing" if progress["running"] else "indexing paused"
-        entry["reason"] = (
-            "corpus vectors are being computed; the channel joins the served pipeline once the corpus is indexed "
-            "and its dev evaluation is recorded in the ledger"
-        )
-    elif entry.get("weights_present"):
-        entry["state"] = "not indexed"
-        entry["reason"] = "weights pinned; corpus vectors not computed on this host"
+    if entry.get("weights_present"):
+        # Not serving: said by `state` never being "serving", and by the page leaving the channel out of the running
+        # stack and dimming it after a search. What it *is*: a pinned model one config key away.
+        entry["state"] = "optional"
+        entry["reason"] = "Pinned (commit and SHA-256 per file); enabled with model.aux_encoder"
     else:
         entry["state"] = "not installed"
         entry["reason"] = "no weights on this host"
     return entry
+
+
+def _gate_gm() -> dict[str, Any]:
+    """The recorded G-M decision (configs/gates/G-M.yaml): the rule and why each other candidate was rejected."""
+    import yaml  # noqa: PLC0415
+
+    from acis.core.paths import repo_path  # noqa: PLC0415
+
+    path = repo_path("configs", "gates", "G-M.yaml")
+    if not path.is_file():
+        return {}
+    loaded = yaml.safe_load(path.read_text("utf-8"))
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def _bakeoff() -> list[dict[str, Any]]:
@@ -131,7 +141,7 @@ def _bakeoff() -> list[dict[str, Any]]:
     return sorted(out, key=lambda x: -(x["ndcg_at_10"] or 0.0))
 
 
-def render_bakeoff(rows: list[dict[str, Any]], *, selected: str) -> str:
+def render_bakeoff(rows: list[dict[str, Any]], *, selected: str, gate: Mapping[str, Any] | None = None) -> str:
     """The bake-off as an HTML table, every accuracy value formatted once from its ledger float (the page inserts it
     verbatim and computes nothing, like the evaluation panel)."""
     from acis.api.benchmarks import _esc, format_points  # noqa: PLC0415
@@ -147,6 +157,16 @@ def render_bakeoff(rows: list[dict[str, Any]], *, selected: str) -> str:
         params = f"{round(int(r['params']) / 1e6)}M" if r.get("params") else "-"
         width = 100.0 * float(r["ndcg_at_10"] or 0.0) / best
         hours = r.get("projected_cold_pass_hours")
+        rejected = ((gate or {}).get("evidence") or {}).get("rejected") or {}
+        if chosen:
+            slo = (gate or {}).get("slo_cold_pass_hours")
+            why = "most accurate" + (
+                f"; projected cold pass {float(hours):.1f} h, inside the {float(slo):g} h budget"
+                if hours is not None and slo
+                else ""
+            )
+        else:
+            why = str(rejected.get(r["model"], "not selected"))
         body.append(
             f'<tr class="{"chosen" if chosen else ""}"><td>{_esc(name)}{badge}</td><td>{params}</td>'
             f'<td data-metric="ndcg_at_10" data-run="{_esc(r["run_id"])}" data-value="{float(r["ndcg_at_10"])!r}">'
@@ -154,15 +174,29 @@ def render_bakeoff(rows: list[dict[str, Any]], *, selected: str) -> str:
             f'<td class="barcell"><div class="hbar"><span style="width:{width:.1f}%"></span></div></td>'
             f'<td data-metric="mrr_at_10" data-value="{float(r["mrr_at_10"])!r}">{format_points(r["mrr_at_10"])}</td>'
             f"<td>{f'{float(hours):.1f} h' if hours is not None else '-'}</td>"
+            f'<td class="why">{_esc(why)}</td>'
             f"<td><code>{_esc(r['run_id'])}</code></td></tr>"
         )
     n = rows[0].get("n_queries") or 0
     return (
         '<div class="table-wrap"><table class="bake"><thead><tr><th>encoder</th><th>params</th><th>NDCG@10</th>'
-        '<th class="barcell"></th><th>MRR@10</th><th>cold pass (projected)</th><th>ledger</th></tr></thead>'
-        f"<tbody>{''.join(body)}</tbody></table></div>"
-        f'<p class="muted" style="margin:8px 0 0">Dense retrieval alone, each encoder on all {int(n):,} dev queries. '
-        "Rule: the smallest permissively licensed, CPU-capable model within tolerance of the best.</p>"
+        '<th class="barcell"></th><th>MRR@10</th><th>cold pass (projected)</th><th>decision</th><th>ledger</th>'
+        f"</tr></thead><tbody>{''.join(body)}</tbody></table></div>"
+        f'<p class="muted" style="margin:8px 0 0">Dense retrieval alone, each encoder on all {int(n):,} dev queries, '
+        f"on the CPU. {_esc(_rule_text(gate or {}))}</p>"
+    )
+
+
+def _rule_text(gate: Mapping[str, Any]) -> str:
+    """The selection rule in words, from the gate record's own numbers."""
+    if not gate:
+        return "Rule: the smallest permissively licensed, CPU-capable model within tolerance of the best."
+    return (
+        f"Rule (gate G-M): among permissively licensed, CPU-capable models of at most "
+        f"{(gate.get('envelope') or {}).get('max_params_b', 1.0):g}B parameters, the smallest within "
+        f"{float(gate.get('size_tolerance_pts', 1.0)):g} NDCG@10 pt of the best; the tolerance widens to "
+        f"{float(gate.get('slow_tolerance_pts', 3.0)):g} pt when the best model's cold pass exceeds "
+        f"{float(gate.get('slow_pass_hours', 2.0)):g} h. Decision: {gate.get('decision', '-')}."
     )
 
 
@@ -245,7 +279,7 @@ def describe(engine: Any) -> dict[str, Any]:
             "snapshot": p0.snapshot.snapshot_id if p0 is not None else None,
         },
         "bakeoff": bakeoff,
-        "bakeoff_html": render_bakeoff(bakeoff, selected=str(config.get("model.encoder"))),
+        "bakeoff_html": render_bakeoff(bakeoff, selected=str(config.get("model.encoder")), gate=_gate_gm()),
         "config_hash": str(config.config_hash)[:12],
     }
 
