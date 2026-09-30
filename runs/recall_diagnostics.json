@@ -1,0 +1,39 @@
+{
+ "n_queries": 5000,
+ "queries_with_symbols": 4038,
+ "union_cap": 500,
+ "mean_pool_size": 482.4798,
+ "channels": {
+  "dense": {
+   "recall@10": 0.822,
+   "recall@50": 0.9106,
+   "recall@100": 0.9378,
+   "recall@200": 0.9608,
+   "recall@500": 0.979,
+   "recall@1000": 0.9888
+  },
+  "bm25": {
+   "recall@10": 0.4388,
+   "recall@50": 0.5404,
+   "recall@100": 0.5846,
+   "recall@200": 0.6336,
+   "recall@500": 0.7006,
+   "recall@1000": 0.7592
+  },
+  "symbols": {
+   "recall@10": 0.2372,
+   "recall@50": 0.2796,
+   "recall@100": 0.3044,
+   "recall@200": 0.3228,
+   "recall@500": 0.3412,
+   "recall@1000": 0.3556
+  }
+ },
+ "union_recall": 0.9716,
+ "only_this_channel_found_the_relevant_unit": {
+  "dense": 1595,
+  "bm25": 18,
+  "symbols": 2,
+  "dense2": 0
+ }
+}
