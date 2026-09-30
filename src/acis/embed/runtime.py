@@ -149,6 +149,7 @@ def _weights_digest(model_dir: Path) -> str:
 #: still encoded on its own rows, exactly as before.
 _FORWARD_LOCK = threading.Lock()
 
+
 @dataclass(slots=True)
 class EncoderRuntime:
     """The `Encoder` the engine talks to: prep-aware, cached, batch-invariant."""

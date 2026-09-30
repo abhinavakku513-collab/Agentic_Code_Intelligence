@@ -46,13 +46,29 @@ def _max_scaled(values: Mapping[str, float]) -> dict[str, float]:
     return {doc: max(0.0, v) / top for doc, v in values.items() if math.isfinite(v)}
 
 
-def weighted_fusion(pool: Sequence[Candidate], *, alpha: float) -> dict[str, float]:
-    """Fused score per candidate. `pool` must carry each candidate's cosine (the engine fills missing ones)."""
+def weighted_fusion(
+    pool: Sequence[Candidate],
+    *,
+    alpha: float,
+    beta: float = 0.0,
+    defined: Mapping[str, float] | None = None,
+) -> dict[str, float]:
+    """Fused score per candidate. `pool` must carry each candidate's cosine (the engine fills missing ones).
+
+    `beta` adds the corpus-defined-symbol evidence (summed IDF of the query names a unit *defines*, scaled by the
+    pool's maximum): 0 leaves the tuned dense + BM25 fusion exactly as it was.
+    """
     if not 0.0 <= alpha <= 1.0:
         raise ValueError(f"fusion weight must be in [0, 1], got {alpha}")
     dense = _minmax({c.doc_id: c.dense_score for c in pool})
     lexical = _max_scaled({c.doc_id: c.lexical_score for c in pool if c.lexical_rank})
-    return {c.doc_id: alpha * dense.get(c.doc_id, 0.0) + (1.0 - alpha) * lexical.get(c.doc_id, 0.0) for c in pool}
+    symbolic = _max_scaled(dict(defined or {})) if beta else {}
+    return {
+        c.doc_id: alpha * dense.get(c.doc_id, 0.0)
+        + (1.0 - alpha) * lexical.get(c.doc_id, 0.0)
+        + beta * symbolic.get(c.doc_id, 0.0)
+        for c in pool
+    }
 
 
 #: One identifier or dotted API name, optionally called: `dijkstra`, `heapq.heappush`, `lru_cache`, `sorted()`.

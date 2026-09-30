@@ -659,6 +659,12 @@ class AcisEngine(VersionedEngineMixin):
 
             with stage("symbols"):
                 symbol_order = data.symbols.search(query_symbols(query), symbol_k)
+                if route != "statement_like" and float(self.config.get("rank.generic.symbol_beta", 0.0) or 0.0):
+                    # Generic route only: units defining a name the query uses join the pool (spec 10 R-Q2 keeps
+                    # the statement route's pools exactly as its ranker was trained on them).
+                    seen = {d for d, _ in symbol_order}
+                    extra = data.symbols.defined_search(data.symbols.defined_in_query(query), symbol_k)
+                    symbol_order += [(d, s) for d, s in extra if d not in seen][: max(0, symbol_k - len(symbol_order))]
 
         sink = counters or self.counters
         sink.incr("pool.from_dense", min(dense_k, len(dense_order)))
@@ -732,8 +738,16 @@ class AcisEngine(VersionedEngineMixin):
             rows = data.vectors[[index[c.doc_id] for c in missing]]
             filled = {c.doc_id: float(s) for c, s in zip(missing, rows @ vector, strict=True)}
             pool = [_replace(c, dense_score=filled[c.doc_id]) if c.doc_id in filled else c for c in pool]
+        beta = float(self.config.get("rank.generic.symbol_beta", 0.0) or 0.0)
+        defined: dict[str, float] = {}
+        if beta and data.symbols is not None:
+            names = data.symbols.defined_in_query(query)
+            if names:
+                defined = {c.doc_id: data.symbols.defined_score(data.position(c.doc_id), names) for c in pool}
+                if counters is not None and any(defined.values()):
+                    counters.incr("fusion.defined_symbols")
         with stage("fusion"):
-            fused = weighted_fusion(pool, alpha=alpha)
+            fused = weighted_fusion(pool, alpha=alpha, beta=beta, defined=defined)
             order = [doc for doc, _ in self._stable_order(data, list(fused.items()))]
             # Spec 02 §6b: for an identifier-like query, units containing that exact identifier come first (still
             # in fused order), then the rest. A shape rule, not a name list (INV-15); nothing matches -> unchanged.

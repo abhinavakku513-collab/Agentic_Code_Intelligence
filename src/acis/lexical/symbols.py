@@ -28,6 +28,10 @@ _DOTTED = re.compile(rf"^{_IDENT}(?:\.{_IDENT})+$")
 _SNAKE = re.compile(r"^_?[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+_?$")
 _CAMEL = re.compile(r"^[A-Za-z][a-z0-9]*[A-Z][A-Za-z0-9]*$")
 _BACKTICK = re.compile(r"`([^`\n]{1,64})`")
+_DEFINED = re.compile(rf"\b(?:def|class)\s+({_IDENT})")
+_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]{3,}")
+#: A corpus-defined name counts as a query symbol only if at most this share of units define it.
+MAX_DEFINED_SHARE = 0.01
 _CALL = re.compile(rf"(?<![A-Za-z0-9_.])({_IDENT}(?:\.{_IDENT})*)\(")  # `solve(`, not "array (sorted)"
 MAX_QUERY_SYMBOLS = 24
 
@@ -78,6 +82,9 @@ class SymbolIndex:
     doc_ids: tuple[str, ...]
     postings: dict[str, list[int]] = field(default_factory=dict)
     symbols_of: list[frozenset[str]] = field(default_factory=list)
+    #: Names the units *define* (`def x`, `class X`), case-folded -> units defining them.
+    defined: dict[str, list[int]] = field(default_factory=dict)
+    defines: list[frozenset[str]] = field(default_factory=list)
 
     @classmethod
     def build(cls, doc_ids: Sequence[str], texts: Sequence[str]) -> SymbolIndex:
@@ -87,7 +94,38 @@ class SymbolIndex:
             index.symbols_of.append(symbols)
             for symbol in symbols:
                 index.postings.setdefault(symbol, []).append(position)
+            names = frozenset(n.lower() for n in _DEFINED.findall(text or ""))
+            index.defines.append(names)
+            for name in names:
+                index.defined.setdefault(name, []).append(position)
         return index
+
+    def defined_in_query(self, query: str, *, max_share: float = MAX_DEFINED_SHARE) -> tuple[str, ...]:
+        """Corpus-derived identifier expansion: query words (4+ characters) that units of *this* corpus define,
+        rare enough to be a name rather than a common word — `Dijkstra` when some unit has `def dijkstra`.
+
+        Derived from the corpus, not from a list (INV-15); how much the evidence counts is a tuned weight."""
+        limit = max(1, int(max_share * max(1, len(self.doc_ids))))
+        words = dict.fromkeys(w.lower() for w in _WORD.findall((query or "")[:20_000]))
+        return tuple(w for w in words if 0 < len(self.defined.get(w, ())) <= limit)
+
+    def defined_idf(self, name: str) -> float:
+        df = len(self.defined.get(name, ()))
+        return math.log(1.0 + len(self.doc_ids) / df) if df else 0.0
+
+    def defined_score(self, position: int, names: Sequence[str]) -> float:
+        """Summed IDF of the query's defined names that unit `position` defines."""
+        own = self.defines[position]
+        return float(sum(self.defined_idf(n) for n in names if n in own))
+
+    def defined_search(self, names: Sequence[str], k: int) -> list[tuple[str, float]]:
+        scores: dict[int, float] = {}
+        for name in dict.fromkeys(names):
+            weight = self.defined_idf(name)
+            for position in self.defined.get(name, ()):
+                scores[position] = scores.get(position, 0.0) + weight
+        ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:k]
+        return [(self.doc_ids[position], score) for position, score in ranked]
 
     def idf(self, symbol: str) -> float:
         df = len(self.postings.get(symbol, ()))
