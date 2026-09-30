@@ -103,7 +103,10 @@ def main(argv: list[str] | None = None) -> int:
                 seconds=0.0,
                 n_queries=len(rows),
                 n_docs=data.size,
-                notes=f"generic fusion alpha={alpha}, symbol beta={beta} (both tuned on cosqa/valid) vs alpha={old_alpha}, beta=0",
+                notes=(
+                    f"generic fusion alpha={alpha}, symbol beta={beta} (both tuned on cosqa/valid) "
+                    f"vs alpha={old_alpha}, beta=0"
+                ),
             )
             report["sets"][name]["ledger_run_id"] = ladder.record(
                 result,
