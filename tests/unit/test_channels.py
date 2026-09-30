@@ -119,3 +119,18 @@ def test_an_older_ranker_reads_its_own_columns_from_the_wider_matrix():
         assert "feature width" in str(exc)
     else:
         raise AssertionError("a stale feature list must be refused")
+
+
+def test_a_response_says_which_channels_ran_and_how_many_candidates_each_gave():
+    from acis.core.types import SearchRequest
+    from acis.engine.routing import categorize
+
+    engine = _engine()
+    engine.build_snapshot(DOCS, source="t")
+    e = engine.search(SearchRequest(query="UnionFind", top_k=3, explain=True)).explanation
+    assert e["category"] in ("exact_symbol", "out_of_corpus") and e["query_symbols"] == ["UnionFind"]
+    assert e["candidates"]["candidates"] >= 1 and e["candidates"]["from_symbols"] >= 1
+    assert "symbols" in e["channels"] and "dense" in e["channels"]
+    assert categorize("x = a[i] + b[j]; y = (c * d) / e", "generic", (), weak_match=False) == "code"
+    assert categorize("something with arrays", "generic", (), weak_match=False) == "vague"
+    assert categorize("long statement", "statement_like", (), weak_match=True) == "statement_like"

@@ -660,6 +660,11 @@ class AcisEngine(VersionedEngineMixin):
             with stage("symbols"):
                 symbol_order = data.symbols.search(query_symbols(query), symbol_k)
 
+        sink = counters or self.counters
+        sink.incr("pool.from_dense", min(dense_k, len(dense_order)))
+        sink.incr("pool.from_bm25", len(lexical_order))
+        sink.incr("pool.from_dense2", len(aux_order))
+        sink.incr("pool.from_symbols", len(symbol_order))
         pool = cand.union(
             dense_order,
             lexical_order,
@@ -671,6 +676,7 @@ class AcisEngine(VersionedEngineMixin):
             symbol=symbol_order,
             symbol_k=symbol_k,
         )
+        sink.incr("pool.candidates", len(pool))
         return dense_order, self._with_exact_scores(data, query, pool, route=route)
 
     def _with_exact_scores(self, data: SnapshotData, query: str, pool: list[Any], *, route: str) -> list[Any]:
@@ -1085,8 +1091,29 @@ class AcisEngine(VersionedEngineMixin):
             )
             confidence_facts["identifier_matches"] = exact
         if req.explain:
+            from acis.engine.routing import categorize  # noqa: PLC0415
+            from acis.lexical.symbols import query_symbols  # noqa: PLC0415
+
             explanation["confidence"] = confidence_facts
             explanation["confidence_basis"] = confidence_facts["basis"]
+            symbols = query_symbols(query)
+            explanation["query_symbols"] = list(symbols)
+            explanation["category"] = categorize(query, route, symbols, weak_match=no_strong_match)
+            seen = request_counters.snapshot()
+            explanation["candidates"] = {
+                k.removeprefix("pool."): int(v) for k, v in seen.items() if k.startswith("pool.")
+            }
+            explanation["channels"] = [
+                name
+                for name, key in (
+                    ("dense", "from_dense"),
+                    ("bm25", "from_bm25"),
+                    ("dense2", "from_dense2"),
+                    ("symbols", "from_symbols"),
+                )
+                if explanation["candidates"].get(key)
+            ]
+            explanation["second_encoder"] = getattr(self.aux_encoder, "name", None) if self.aux_encoder_name else None
         _STAGES.reset(token)
         total_ms = (time.perf_counter() - started) * 1000
         return SearchResponse(

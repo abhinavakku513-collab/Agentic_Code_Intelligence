@@ -128,4 +128,27 @@ def decide(
     return RouteDecision("statement_like", score, availability, tau, rho, "statement-like and well covered")
 
 
-__all__ = ["DEFAULT_K", "DEFAULT_RHO", "DEFAULT_TAU", "QueryBank", "RouteDecision", "decide"]
+def categorize(query: str, route: str, symbols: tuple[str, ...], *, weak_match: bool) -> str:
+    """A descriptive category for the page and the logs — never a gate (every channel runs for every category).
+
+    By shape only (INV-15): `statement_like` is the router's verdict; `exact_symbol` a short query that names a
+    code symbol; `code` one written mostly in code syntax; `vague` a very short query with no symbol; `generic`
+    anything else. `out_of_corpus` replaces the category when the calibrated confidence finds no strong match —
+    it describes the answer, not the query.
+    """
+    words = query.split()
+    code_chars = sum(query.count(c) for c in "=()[]{}:;<>+*/%")
+    if weak_match and route != "statement_like":
+        return "out_of_corpus"
+    if route == "statement_like":
+        return "statement_like"
+    if symbols and len(words) <= 6:
+        return "exact_symbol"
+    if code_chars >= max(4, len(words) // 2):
+        return "code"
+    if len(words) <= 3:
+        return "vague"
+    return "generic"
+
+
+__all__ = ["DEFAULT_K", "DEFAULT_RHO", "DEFAULT_TAU", "QueryBank", "RouteDecision", "categorize", "decide"]

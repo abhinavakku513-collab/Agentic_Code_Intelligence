@@ -178,7 +178,8 @@ function setCorpus(tab, text) { corpus[tab] = text; showCorpus(); }
 /* -- P0 / P1 hit rendering --------------------------------------------------------------------------------- */
 const STAGES = { route: ["route", "--stage-route"], route_encode: ["encode", "--stage-encode"], encode: ["encode", "--stage-encode"],
   encode_wait: ["queued for the model", "--stage-wait"], dense: ["dense", "--stage-dense"], bm25: ["BM25", "--stage-bm25"],
-  features: ["features", "--stage-features"], ranker: ["learned ranker", "--stage-ranker"], fusion: ["weighted fusion", "--stage-fusion"] };
+  features: ["features", "--stage-features"], ranker: ["learned ranker", "--stage-ranker"], fusion: ["weighted fusion", "--stage-fusion"],
+  encode2: ["encode (2nd encoder)", "--stage-encode"], dense2: ["dense (2nd encoder)", "--stage-dense"], symbols: ["exact symbols", "--stage-bm25"] };
 function renderTrace(t) {
   const merged = {};
   for (const [k, v] of Object.entries(t)) {
@@ -229,9 +230,17 @@ function renderSummary(target, r, wallMs) {
   const e = r.explanation || {};
   const rd = e.route_decision || {};
   $(target).hidden = false;
+  const c = e.candidates || {};
+  const channelNames = { dense: "dense", bm25: "BM25", dense2: e.second_encoder ? `dense · ${e.second_encoder.split("/").pop()}` : "dense 2", symbols: "exact symbols" };
+  const pool = c.candidates != null
+    ? `<span title="${escapeHtml(Object.entries(c).filter(([k]) => k.startsWith("from_")).map(([k, v]) => `${k.slice(5)}: ${v}`).join(" · "))}">candidates <b>${fmtInt(c.candidates)}</b> from ${(e.channels || []).map((ch) => `<span class="badge">${escapeHtml(channelNames[ch] || ch)}</span>`).join(" ")}</span>`
+    : "";
   $(target).innerHTML = [
     `<span>ordered by <b>${escapeHtml(e.ordered_by || "-")}</b></span>`,
     `<span title="${escapeHtml(rd.reason || "")}">route <span class="badge">${escapeHtml(r.route)}</span></span>`,
+    e.category ? `<span>category <span class="badge accent">${escapeHtml(e.category.replace(/_/g, " "))}</span></span>` : "",
+    (e.query_symbols || []).length ? `<span>symbols ${e.query_symbols.map((x) => `<code>${escapeHtml(x)}</code>`).join(" ")}</span>` : "",
+    pool,
     confidenceBadge(r),
     `<span><b>${r.timings_ms.total.toFixed(0)} ms</b> engine · ${wallMs.toFixed(0)} ms wall</span>`,
     renderTrace(r.timings_ms),
