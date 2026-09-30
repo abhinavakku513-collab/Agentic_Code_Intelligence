@@ -409,9 +409,28 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
     if STATIC_DIR.is_dir():
         media = {".css": "text/css", ".js": "text/javascript", ".svg": "image/svg+xml", ".html": "text/html"}
 
+        # A browser that keeps an old `app.js` next to a new `index.html` runs script against elements that no longer
+        # exist: start-up throws before the repository lists are filled, and the Versions and Evolution tabs look
+        # dead. So the page names each asset with its content hash (`app.js?v=<sha12>`), and nothing is served
+        # without `Cache-Control: no-cache` — every load revalidates, and a changed file is a different URL.
+        no_cache = {"Cache-Control": "no-cache"}
+
+        def versioned_index() -> str:
+            import hashlib  # noqa: PLC0415
+            import re  # noqa: PLC0415
+
+            page = (STATIC_DIR / "index.html").read_text("utf-8")
+
+            def stamp(match: re.Match[str]) -> str:
+                asset = STATIC_DIR / match.group(2)
+                digest = hashlib.sha256(asset.read_bytes()).hexdigest()[:12] if asset.is_file() else "missing"
+                return f'{match.group(1)}="{match.group(2)}?v={digest}"'
+
+            return re.sub(r'(href|src)="(app\.(?:css|js))"', stamp, page)
+
         @app.get("/", include_in_schema=False)
         def index() -> Any:
-            return FileResponse(STATIC_DIR / "index.html", media_type="text/html")
+            return HTMLResponse(versioned_index(), headers=no_cache)
 
         @app.get("/favicon.ico", include_in_schema=False)
         def favicon() -> Any:
@@ -422,7 +441,7 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
             path = (STATIC_DIR / asset).resolve()
             if path.parent != STATIC_DIR.resolve() or not path.is_file() or path.suffix not in media:
                 raise HTTPException(status_code=404, detail="not found")
-            return FileResponse(path, media_type=media[path.suffix])
+            return FileResponse(path, media_type=media[path.suffix], headers=no_cache)
 
     return app
 

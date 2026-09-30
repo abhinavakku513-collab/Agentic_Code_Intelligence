@@ -148,7 +148,7 @@ def test_the_ui_is_served_and_references_no_remote_asset(client):
 
     page = client.get("/").text
     assert "<title>ACIS" in page
-    assets = re.findall(r'(?:href|src)="([^"]+)"', page)
+    assets = [a.split("?", 1)[0] for a in re.findall(r'(?:href|src)="([^"]+)"', page)]
     assert {"app.css", "app.js", "favicon.svg"} <= set(assets)
     for asset in assets:
         assert not asset.startswith(("http:", "https:", "//")), asset
@@ -307,3 +307,21 @@ def test_a_single_channel_search_says_so(client):
         "/v1/search", json={"query": "binary search", "mode": "dense", "top_k": 2, "explain": True}
     ).json()
     assert body["explanation"]["ordering"] == "dense"
+
+
+def test_the_page_can_never_run_a_stale_script(client):
+    """A browser-cached `app.js` from before an upgrade, next to a new page, broke Versions and Evolution: the old
+    script threw on renamed elements before it filled the repository lists. Assets are named by content hash and
+    nothing is cached without revalidation."""
+    import hashlib
+    import re
+
+    from acis.api.app import STATIC_DIR
+
+    response = client.get("/")
+    assert response.headers["cache-control"] == "no-cache"
+    for name in ("app.js", "app.css"):
+        digest = hashlib.sha256((STATIC_DIR / name).read_bytes()).hexdigest()[:12]
+        assert re.search(rf'="{re.escape(name)}\?v={digest}"', response.text), name
+        served = client.get(f"/{name}?v={digest}")
+        assert served.status_code == 200 and served.headers["cache-control"] == "no-cache"

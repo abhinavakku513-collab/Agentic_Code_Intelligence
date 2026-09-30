@@ -364,7 +364,7 @@ def render_headline(runs: Mapping[str, Any]) -> str:
     n = int(full.get("provenance", {}).get("n_queries") or 0)
     tiles.append(
         f'<div class="kpi-foot">APPS dev split · {n:,} queries · out of fold · '
-        f'ledger <code>{_esc(full["run_id"])}</code>'
+        f"ledger <code>{_esc(full['run_id'])}</code>"
         f"{' · chain and artifact verified' if verified else ' · <b>integrity check failed</b>'}</div>"
     )
     return "".join(tiles)

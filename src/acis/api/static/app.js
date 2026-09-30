@@ -515,11 +515,14 @@ function renderGroups(groups, labels) {
       const title = !s ? `${v} · not present` : `${v} · ${s.relation}${s.inferred ? " (inferred)" : ""}${s.same_content_as ? ` · same content as ${s.same_content_as} (revert)` : ""}`;
       return `<span class="tl-step"><span class="dot ${cls}" title="${escapeHtml(title)}"></span><span class="vlabel">${escapeHtml(v)}</span></span>`;
     }).join('<span class="rail"></span>');
-    const members = g.members.map((m) => `<code>${escapeHtml(m.version)}</code>`).join(" ");
+    const order = Object.fromEntries(labels.map((v, j) => [v, j]));   // the repository's own version order
+    const members = [...g.members].sort((a, b) => (order[a.version] ?? 1e9) - (order[b.version] ?? 1e9))
+      .map((m) => `<code>${escapeHtml(m.version)}</code>`).join(" ");
+    const names = g.best.source ? definedNames(g.best.source).slice(0, 3).map((n) => `<span class="fn">${escapeHtml(n)}</span>`).join("") : "";
     return `<article class="hit">
       <div class="hit-head">
         <div class="rank">${i + 1}</div>
-        <div><div class="title">${escapeHtml(g.best.key)}</div>
+        <div><div class="fns">${names}<span class="unit-key">${escapeHtml(g.best.key)}</span></div>
           <div class="chips"><span class="badge accent">best revision ${escapeHtml(g.best.version)}</span>
           <span class="badge">${g.n_revisions} revision(s) · ${escapeHtml(g.span[0])} → ${escapeHtml(g.span[1])}</span>
           ${g.inferred ? '<span class="badge warn" title="at least one link in this lineage was inferred rather than exact">contains an inferred link</span>' : ""}
@@ -541,7 +544,7 @@ function renderFlat(hits) {
     const dup = first != null ? `<span class="badge warn">same unit as #${first}</span>` : "";
     return `<article class="hit">
       <div class="hit-head"><div class="rank">${h.rank}</div>
-        <div><div class="title">${escapeHtml(h.unit.key)}</div>
+        <div><div class="fns">${definedNames(h.source).slice(0, 3).map((n) => `<span class="fn">${escapeHtml(n)}</span>`).join("")}<span class="unit-key">${escapeHtml(h.unit.key)}</span></div>
           <div class="chips"><span class="badge accent">${escapeHtml(h.unit.version)}</span>${dup}
           <span class="badge">${escapeHtml(h.unit.body_hash.slice(0, 10))}</span></div></div>
         <div class="sim"></div></div>
@@ -671,13 +674,15 @@ async function loadSystem() {
   } catch (err) { $("pill-stack").textContent = `system view unavailable: ${err.message}`; $("pill-stack").classList.add("warn"); }
 }
 
-/* Deep links for a demo runbook: `#tab=system` opens a tab, `#q=<query>` runs that search on load. */
+/* Deep links for a demo runbook: `#tab=system` opens a tab; `#q=<query>` runs that search on load (on the Search tab,
+ * or on `#tab=versions` / `#tab=evolution` when one of those is named). */
 function openFromFragment() {
   const params = new URLSearchParams(location.hash.slice(1));
   const tab = params.get("tab");
   if (tab) { const button = document.querySelector(`.tab[data-view="${CSS.escape(tab)}"]`); if (button) button.click(); }
   const q = params.get("q");
-  if (q) { $("q-search").value = q; $("form-search").requestSubmit(); }
+  const view = tab && ["versions", "evolution"].includes(tab) ? tab : "search";
+  if (q) { $(`q-${view}`).value = q; $(`form-${view}`).requestSubmit(); }
 }
 
 /* -- start-up ---------------------------------------------------------------------------------------------- */
