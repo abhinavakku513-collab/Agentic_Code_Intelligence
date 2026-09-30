@@ -19,7 +19,8 @@ lexical:  {k1: 1.5, b: 0.75, delta: 0.5, method: lucene, stemmer: english, token
 # 100-candidate union, NDCG@10 74.17 out of fold [ledger:dev-f168f31bc434] (scripts/bench/ladder_experiments.py).
 retrieve: {dense_k: 300, lexical_k: 200, symbol_k: 50, union_cap: 500, prf: {enabled: false}, top_k_out: 1000}   # G4 undecided: off
 rank:     {model: artifacts/ranker/p0-gte-pool500-symbols.txt,   # G5: statement_like route
-           generic: {alpha: 0.9}}   # generic route: weighted fusion, alpha tuned on CosQA valid only
+           generic: {alpha: 0.9, symbol_beta: 0.0}}   # beta tuned 0.05 on CosQA valid moved no held-out set
+           # beyond noise (CosQA test -0.14, CSN -0.10, APPS generic +0.04; scripts/bench/tune_symbol_beta.py): off   # generic route: weighted fusion, alpha tuned on CosQA valid only
            # [ledger:dev-2c29126949fa]; held out: CosQA test +0.20 [-0.83,+1.22] [ledger:dev-5b0422eda361],
            # CodeSearchNet-Py +0.76 [+0.30,+1.23] [ledger:dev-e5bae0ac27c0] (scripts/bench/reg_fusion.py)
 route:    {bank: artifacts/route/dev_query_bank.npy, tau: 0.6002, k: 8, rho: 0.35}              # routing v1.1
