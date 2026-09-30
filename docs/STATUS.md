@@ -43,11 +43,27 @@ tool cannot perform or sign for:
 
 Nothing is blocked *technically*: the `AcisEngine` interface is frozen, so Track B could start today.
 
+## Implementation inventory (2026-09-30, final implementation pass — see docs/FINAL_ACCEPTANCE_REPORT.md)
+- **P0 served pipeline** (one function for page and evaluation, `AcisEngine._rank_one`): routing v1.1 → gte dense
+  (exact) + code BM25 + exact symbols → ≤ 500 candidates, each scored by every channel → LightGBM LambdaRank on
+  statement-like queries / weighted dense+BM25 fusion (α 0.9, REG-tuned) elsewhere / identifier-first → dense tail.
+  Dev, 5,000 queries, out of fold: NDCG@10 74.13, MRR@10 70.93, R@100 94.86 `[ledger:dev-c78a92526701]`; dense
+  71.03 / 67.46 / 93.78 `[ledger:dev-854937ff7e9e]`. Candidate recall of the union 97.16 % `[ledger:dev-f320c5718b54]`.
+- **Implemented, not measured:** second dense encoder channel (Qwen3-Embedding-0.6B via `model.aux_encoder`) — its
+  corpus vectors need the owner-run GPU tool environment (`scripts/train/gpu_env_setup.sh`) or ~14 h of CPU.
+- **Not integrated:** SPLADE (licences of mainstream checkpoints outside D4; the Apache-2.0 option needs a new card).
+- **P1** isolation, incremental builds, rollback, recovery: suites green; catalog v2 keys snapshots per repository;
+  a real git history (edit, move, unrelated file, revert) verified with `scripts/demo/real_git_check.py`.
+- **Bonus** lineage machinery intact; grouped and flat tie on Evolution-NDCG@10 `[ledger:bench-52d48f680740]`.
+- **UI** P0 evaluation panel rendered from the ledger row (tested identical); per-query view from the pinned artifact.
+- **TEST touches used: 0 of 6.** Nothing in this pass read the sealed labels.
+
 ## Owner actions pending
 1 Run the canary (docs/CANARY.md) and record the version above · 2 answer the compute/deadline questions ·
 3 send docs/official/ORGANIZER_QA.md · 4 confirm or reject ADR-0005 (the G0.4/G0.5 deferral) ·
 5 fill docs/reference/third_party_scores.md or leave R-02 unmeasured · 6 set configs/targets.yaml after G0.5 ·
-7 optionally anchor the `Edit(./data/**)` deny glob in `.claude/settings.json` so the package map's `data` name can
+7 run `bash scripts/train/gpu_env_setup.sh` (GPU tool environment for the Qwen channel) · 8 decide G1 (V0/512 vs V0/1024) · 9 push `main` from a terminal with GitHub credentials ·
+10 optionally anchor the `Edit(./data/**)` deny glob in `.claude/settings.json` so the package map's `data` name can
 be restored (ADR-0004)
 
 ### Before the first release candidate, in this order
@@ -71,13 +87,13 @@ be restored (ADR-0004)
 | G0.6 guard tests + physical seal | **PASS** | – | 194 security tests; seal clean; detector matches path components |
 | P1-B0 metric parity | **PASS** | – | equal to mteb/pytrec_eval at 1e-9, incl. graded/multi-relevant |
 | P1-B1 BM25 parity | **PASS** | `dev-8717922a9ca4`, `dev-ee395f07e048` | 100 % top-10 identical, 5,000 queries |
-| G-M encoder | pending | – | seed Qwen3-Embedding-0.6B; smallest within 1.0 pt (3.0 pt if best cold pass > 2 h) |
-| G1 prep, per route | pending | – | statement_like: T1+V0, 1024/1024; generic: T3+V0 |
-| G2 lexical + bridge | pending | – | dense-only |
+| G-M encoder | **decided** (gate file; not a phase PASS) | `gate-055152620da6` | gte-modernbert-base 71.03; granite-r2 56.70, granite-small-r2 53.95; Qwen3-0.6B excluded on projected cold pass (configs/gates/G-M.yaml) |
+| G1 prep, per route | **measured, 9 cells recorded; owner decision pending** | `gate-f736bd6e3a31` (V0/1024 71.03), `gate-afd311693e96` (V0/512 70.69), `gate-aa019b64529d` (V2/1024 70.71) | the rule selects V0/512 (cheaper, within 0.5 pt); V0/1024 stays until the owner writes configs/gates/G1.yaml |
+| G2 lexical + bridge | measured (dev rows; gate row pending a clean re-record) | `dev-f168f31bc434` | code-aware BM25 + exact symbols in a ≤ 500 union; plain RRF measured harmful |
 | G3 adaptation (OOF) | pending | – | frozen base |
-| G-OOD arbitrary-query robustness | pending | – | reject the change |
+| G-OOD arbitrary-query robustness | **8 of 9 families pass** (served pipeline, engine path) | `dev-e8304c8b6364` … `dev-19ccf584c73b` | format_noise fails its strict 0.0 limit (+0.12, CI [−0.30, +0.56]) |
 | G4 PRF | pending | – | off |
-| G5 ranker | pending | – | weighted fusion → dense-only |
+| G5 ranker | measured (dev rows) | `dev-c78a92526701` | served pipeline 74.13 vs dense 71.03, +3.09 [+2.62, +3.57], out of fold, engine path |
 | G-AB Mode A vs B (OOF) | pending | – | A iff Δ ≥ +0.5 pt (CI>0), else B |
 | G6 numeric profile | pending | – | cpu-fp32 |
 | G7 invariants | pending | – | must pass |
