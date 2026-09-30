@@ -68,7 +68,14 @@ def main(argv: list[str] | None = None) -> int:
     fold_of = {q: f for f, members in fold_members().items() for q in members}
 
     started = time.perf_counter()
-    groups, _, _, _ = build_groups(engine, snapshot, ids, dense_k=100, lexical_k=30, cap=100)
+    groups, _, _, _ = build_groups(
+        engine,
+        snapshot,
+        ids,
+        dense_k=int(config.get("retrieve.dense_k", 100)),
+        lexical_k=int(config.get("retrieve.lexical_k", 30)),
+        cap=int(config.get("retrieve.union_cap", 100)),
+    )
     models = {
         fold: ltr.train([g for g in groups if fold_of[g.query_id] != fold], rounds=args.rounds, seed=0)
         for fold in sorted(set(fold_of.values()))

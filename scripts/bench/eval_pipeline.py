@@ -107,7 +107,14 @@ def main(argv: list[str] | None = None) -> int:
 
     # Training groups for the fold rankers: the pools and features the shipped ranker was fitted on.
     print(f"building {len(ids)} training groups …", flush=True)
-    groups, _, _, _ = build_groups(engine, snapshot, ids, dense_k=100, lexical_k=30, cap=100)
+    groups, _, _, _ = build_groups(
+        engine,
+        snapshot,
+        ids,
+        dense_k=int(config.get("retrieve.dense_k", 100)),
+        lexical_k=int(config.get("retrieve.lexical_k", 30)),
+        cap=int(config.get("retrieve.union_cap", 100)),
+    )
     by_query = {g.query_id: g for g in groups}
 
     bank_path = acis_root() / str(config.get("route.bank"))
