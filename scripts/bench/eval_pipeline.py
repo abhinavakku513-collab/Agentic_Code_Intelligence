@@ -87,6 +87,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=0, help="first N dev queries (0 = all 5,000); a smoke run")
     parser.add_argument("--rounds", type=int, default=400, help="ranker boosting rounds (the shipped value)")
     parser.add_argument("--no-ledger", action="store_true")
+    parser.add_argument(
+        "--no-route-analysis",
+        action="store_true",
+        help="skip re-ranking each query under the other route (a diagnostic; with a route-sensitive second "
+        "encoder it costs one extra full-length encode per query)",
+    )
     args = parser.parse_args(argv)
 
     started_all = time.perf_counter()
@@ -155,9 +161,10 @@ def main(argv: list[str] | None = None) -> int:
             full = engine._rank_one(data, text, top_k=TOP_K, strict=False, counters=request, route=decision.route)
             dense = engine._rank_one(data, text, top_k=TOP_K, strict=False, channel="dense")
             # Routing analysis: the same query under the other route — does the router cost accuracy?
-            other = "generic" if decision.route == "statement_like" else "statement_like"
-            forced = engine._rank_one(data, text, top_k=TOP_K, strict=False, counters=Counters(), route=other)
-            run_forced[qid] = rank_derived_scores([d for d, _ in forced], TOP_K)
+            if not args.no_route_analysis:
+                other = "generic" if decision.route == "statement_like" else "statement_like"
+                forced = engine._rank_one(data, text, top_k=TOP_K, strict=False, counters=Counters(), route=other)
+                run_forced[qid] = rank_derived_scores([d for d, _ in forced], TOP_K)
             full_ids, dense_ids = [d for d, _ in full], [d for d, _ in dense]
             run_full[qid] = rank_derived_scores(full_ids, TOP_K)
             run_dense[qid] = rank_derived_scores(dense_ids, TOP_K)
@@ -193,9 +200,9 @@ def main(argv: list[str] | None = None) -> int:
         record["ndcg_at_10_full"] = round(pq_full[record["query_id"]], 6)
         record["ndcg_at_10_dense"] = round(pq_dense[record["query_id"]], 6)
     boot = paired_bootstrap(pq_full, pq_dense)
-    pq_forced = per_query(qrels, run_forced, "ndcg", 10)
+    pq_forced = per_query(qrels, run_forced, "ndcg", 10) if run_forced else {}
     routing_analysis = {}
-    for route, other in (("generic", "statement_like"), ("statement_like", "generic")):
+    for route, other in (("generic", "statement_like"), ("statement_like", "generic")) if run_forced else ():
         subset = [r["query_id"] for r in records if r["route"]["route"] == route]
         if not subset:
             continue
@@ -210,7 +217,8 @@ def main(argv: list[str] | None = None) -> int:
             "bootstrap_other_minus_served": result.as_dict(),
         }
     for record in records:
-        record["ndcg_at_10_other_route"] = round(pq_forced[record["query_id"]], 6)
+        if pq_forced:
+            record["ndcg_at_10_other_route"] = round(pq_forced[record["query_id"]], 6)
     mrr_full = per_query(qrels, run_full, "mrr", 10)
     mrr_dense = per_query(qrels, run_dense, "mrr", 10)
     boot_mrr = paired_bootstrap(mrr_full, mrr_dense)

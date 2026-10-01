@@ -19,6 +19,9 @@ import pytest
 
 ROOT = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).resolve().parents[2])
 GUARD = ROOT / ".claude" / "hooks" / "guard.py"
+#: The guard is development tooling (an AI-assistant PreToolUse hook) and is not published with the repository;
+#: these tests run wherever it is present and are skipped in a checkout that does not carry it.
+pytestmark = pytest.mark.skipif(not GUARD.is_file(), reason="development guard hook not present in this checkout")
 HF = "/home/u/.cache/huggingface/hub/datasets--CoIR-Retrieval--apps/snapshots/f22508f/default/test-00000-of-00001.parquet"
 
 

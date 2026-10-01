@@ -165,7 +165,7 @@ def test_each_mode_keeps_its_own_predictions(tmp_path, official_config, isolated
 
 @pytest.mark.slow
 def test_an_ab_run_books_one_held_out_touch_per_mode(tmp_path, official_config, isolated_ledger):
-    """CLAUDE.md §4 budgets RC1 as two touches (A+B); booking one would under-report the budget."""
+    """docs/DESIGN_RULES.md budgets RC1 as two touches (A+B); booking one would under-report the budget."""
     result = run(tmp_path, official_config, "AB")
     row = ledger.find(result.run_id)
     assert row.get("test_touch_count") == 2

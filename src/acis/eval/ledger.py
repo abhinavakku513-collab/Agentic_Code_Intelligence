@@ -26,7 +26,7 @@ from acis.core.paths import repo_path
 
 LEDGER_PATH = ("runs", "ledger.jsonl")
 GENESIS = "0" * 64
-TEST_TOUCH_BUDGET = 6  # RC0 x1, RC1 x2 (A+B), contingency x2, post-hoc clean-pool x1 (CLAUDE.md §4)
+TEST_TOUCH_BUDGET = 6  # RC0 x1, RC1 x2 (A+B), contingency x2, post-hoc clean-pool x1 (docs/DESIGN_RULES.md)
 KINDS = ("dev", "gate", "rc", "audit", "bench")
 
 

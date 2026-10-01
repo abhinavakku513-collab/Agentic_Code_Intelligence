@@ -141,7 +141,7 @@ def load_card(key: str) -> ModelCard:
         raise InvalidInput(f"model card {key!r} is missing required fields", missing=missing)
     if raw.get("trust_remote_code"):
         raise InvalidInput(
-            f"model card {key!r} requests trust_remote_code, which is forbidden (CLAUDE.md §4)", card=str(path)
+            f"model card {key!r} requests trust_remote_code, which is forbidden (docs/DESIGN_RULES.md)", card=str(path)
         )
 
     return ModelCard(

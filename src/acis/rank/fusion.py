@@ -10,6 +10,9 @@ query's own candidate pool** (INV-3: nothing is normalised across queries):
 
     fused(d) = α · minmax(cos)(d) + (1 − α) · bm25(d) / max bm25
 
+With a second dense encoder (`model.aux_encoder`) and `rank.generic.aux_weight` = w > 0, the dense term is the
+mix (1 − w) · minmax(cos) + w · minmax(cos₂), each normalised within the same pool; w = 0 is the formula above.
+
 BM25 is normalised against its theoretical minimum, zero, rather than the pool's minimum: a document BM25 did not
 retrieve has no lexical evidence, and a query whose rare identifier matches exactly one document must keep that
 one match rather than see it normalised away. A channel with no signal contributes nothing, so a query BM25 cannot
@@ -52,6 +55,7 @@ def weighted_fusion(
     alpha: float,
     beta: float = 0.0,
     defined: Mapping[str, float] | None = None,
+    aux_weight: float = 0.0,
 ) -> dict[str, float]:
     """Fused score per candidate. `pool` must carry each candidate's cosine (the engine fills missing ones).
 
@@ -60,7 +64,16 @@ def weighted_fusion(
     """
     if not 0.0 <= alpha <= 1.0:
         raise ValueError(f"fusion weight must be in [0, 1], got {alpha}")
+    if not 0.0 <= aux_weight <= 1.0:
+        raise ValueError(f"second-encoder weight must be in [0, 1], got {aux_weight}")
     dense = _minmax({c.doc_id: c.dense_score for c in pool})
+    if aux_weight:
+        second = _minmax({c.doc_id: c.aux_score for c in pool})
+        if second:  # no second-encoder scores in this pool: the primary alone, exactly as with w = 0
+            dense = {
+                c.doc_id: (1.0 - aux_weight) * dense.get(c.doc_id, 0.0) + aux_weight * second.get(c.doc_id, 0.0)
+                for c in pool
+            }
     lexical = _max_scaled({c.doc_id: c.lexical_score for c in pool if c.lexical_rank})
     symbolic = _max_scaled(dict(defined or {})) if beta else {}
     return {

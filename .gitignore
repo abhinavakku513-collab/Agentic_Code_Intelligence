@@ -21,3 +21,9 @@ dist/
 # ACIS caches default to ~/.acis/ (outside git, CLAUDE.md §7); these remain for an explicit override.
 .acis-home/
 .acis-reg/
+
+# Internal development tooling (AI-assistant instructions, hooks, progress tracker) — kept locally, not published
+/.claude/
+/CLAUDE.md
+/AGENTS.md
+/docs/STATUS.md

@@ -6,7 +6,7 @@ it reads the frozen config rather than being told:
 
     model: {encoder: <card key> | hashing, dim: …, numeric_profile: cpu-fp32}
 
-Weights and vectors live under `ACIS_HOME`, deliberately outside the repository (CLAUDE.md §7): worktrees share
+Weights and vectors live under `ACIS_HOME`, deliberately outside the repository (docs/DESIGN_RULES.md): worktrees share
 one copy, and the working-tree seal scan stays free of gigabytes that are not ours.
 
 `hashing` is the model-free stand-in that validated the harness in Phase 1. It reports `submission_capable =

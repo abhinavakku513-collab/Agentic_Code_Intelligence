@@ -88,7 +88,7 @@ def test_an_unknown_model_name_is_refused_before_anything_is_loaded():
 
 
 def test_weights_and_vectors_live_outside_the_repository(_home):
-    """A cache inside the tree would carry gigabytes into every worktree and trip the seal scan (CLAUDE.md §7)."""
+    """A cache inside the tree would carry gigabytes into every worktree and trip the seal scan (docs/DESIGN_RULES.md)."""
     from acis.core.paths import acis_root
 
     for path in (factory.model_dir("qwen3-embedding-0.6b"), factory.vector_cache_dir("qwen3-embedding-0.6b")):

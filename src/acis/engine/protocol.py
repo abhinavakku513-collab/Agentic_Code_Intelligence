@@ -1,4 +1,4 @@
-"""The `AcisEngine` interface — **frozen at the end of Phase 1** (docs/spec/06 §1, docs/TRIAGE.md).
+"""The `AcisEngine` interface — **frozen at the end of Phase 1** (docs/spec/06 §1).
 
 Track B builds against this file. Changing a signature here needs an ADR, because a worktree that is three phases
 behind must still compile against it. Methods whose implementation belongs to a later phase are part of the contract

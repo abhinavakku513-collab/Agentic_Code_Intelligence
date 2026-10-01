@@ -1,11 +1,14 @@
-# ACIS Makefile — thin wrappers; logic lives in the `acis` CLI and scripts/. Phase-0 SEED: targets that need code from a later phase fail with a clear message.
+# ACIS Makefile — thin wrappers; logic lives in the `acis` CLI and scripts/.
 PY ?= uv run
 FAST_DIRS := $(wildcard tests/unit tests/security tests/contract tests/robustness)
-.PHONY: setup fetch fetch-models doctor lint typecheck test test-fast test-security robustness bench eval-dev gate rc-official reproduce reproduce-cache demo preflight evidence
+.PHONY: setup models fetch fetch-models doctor lint typecheck test test-fast test-security robustness bench eval-dev gate rc-official reproduce reproduce-cache demo preflight evidence
 
 setup:            ; uv sync
 fetch:            ; $(PY) acis fetch
-# OWNER, once, on a networked machine: downloads safetensors + tokeniser for the carded models and pins them (G0.4).
+# Judges / first run: download the encoders the P0 pipeline uses at their pinned commits, then re-hash every file.
+P0_MODELS ?= gte-modernbert-base,qwen3-embedding-0.6b
+models:           ; $(PY) acis fetch --models $(P0_MODELS) && $(PY) acis fetch --models $(P0_MODELS) --verify
+# MAINTAINER: download a newly carded model and write its commit + file hashes into the card (G0.4).
 fetch-models:     ; @test -n "$(MODELS)" || { echo "usage: make fetch-models MODELS=qwen3-embedding-0.6b[,...]"; exit 64; }; $(PY) acis fetch --models $(MODELS) --pin
 doctor:           ; $(PY) acis doctor
 lint:             ; $(PY) ruff format --check . && $(PY) ruff check .

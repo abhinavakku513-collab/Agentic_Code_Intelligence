@@ -54,7 +54,12 @@ class Candidate:
     prf_score: float = NAN
     prf_rank: int = 0
     aux_score: float = NAN
+    #: Rank inside the second encoder's own top list (0 = that channel did not retrieve it): channel agreement.
     aux_rank: int = 0
+    #: Rank of this candidate under the second encoder over the **whole** snapshot (0 = not computed). The ranker's
+    #: `rank_dense2` reads this when present, so the feature exists for every candidate, not only for the ones the
+    #: second channel happened to put in its own top list.
+    aux_full_rank: int = 0
     symbol_score: float = NAN
     symbol_rank: int = 0
     meta: Mapping[str, Any] = field(default_factory=dict)
@@ -187,7 +192,9 @@ def feature_matrix(
             "dup_cluster_size": float(doc.get("dup_cluster_size", NAN)),
             **{name: float(bridge_row.get(name, NAN)) for name in GROUPS["bridge"]},
             "cos2": candidate.aux_score,
-            "rank_dense2": float(candidate.aux_rank) if candidate.aux_rank else NAN,
+            "rank_dense2": float(candidate.aux_full_rank or candidate.aux_rank)
+            if (candidate.aux_full_rank or candidate.aux_rank)
+            else NAN,
             "z_cos2": z_aux[index],
             **{name: float((symbols or {}).get(candidate.doc_id, {}).get(name, NAN)) for name in GROUPS["symbol"]},
             "n_channels": float(

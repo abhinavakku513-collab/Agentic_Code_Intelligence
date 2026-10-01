@@ -134,3 +134,81 @@ def test_a_response_says_which_channels_ran_and_how_many_candidates_each_gave():
     assert categorize("x = a[i] + b[j]; y = (c * d) / e", "generic", (), weak_match=False) == "code"
     assert categorize("something with arrays", "generic", (), weak_match=False) == "vague"
     assert categorize("long statement", "statement_like", (), weak_match=True) == "statement_like"
+
+
+def test_every_candidate_gets_its_whole_snapshot_rank_under_the_second_encoder():
+    """`rank_dense2` must exist for every pooled unit — not only those the second channel put in its own top list."""
+    engine = _engine(model={"encoder": "hashing", "aux_encoder": "hashing", "dim": 64}, retrieve={"aux_k": 0})
+    data = engine.snapshot_data(engine.build_snapshot(DOCS, source="t"))
+    query = "reverse the words"
+    _, pool = engine.candidate_pool(data, query, route="generic", want=5)
+    assert pool and all(c.aux_rank == 0 for c in pool)  # the channel added nothing to the union …
+    vector = engine._aux_query_vector(data.snapshot.snapshot_id, query, route="generic")
+    from acis.embed.base import exact_search
+
+    scores = exact_search(vector.reshape(1, -1), data.aux_vectors)[0]
+    for c in pool:  # … yet every candidate carries its exact rank over the whole snapshot
+        assert c.aux_full_rank == int((scores > scores[data.position(c.doc_id)]).sum()) + 1
+    matrix = engine.pool_features(data, query, pool)
+    assert np.isfinite(matrix[:, cand.FEATURE_NAMES.index("rank_dense2")]).all()
+    # Channel agreement still counts only the channels that retrieved the unit.
+    assert (matrix[:, cand.FEATURE_NAMES.index("n_channels")] <= 3).all()
+
+
+def test_fusion_second_encoder_weight_zero_is_exactly_the_tuned_formula():
+    from acis.rank.fusion import weighted_fusion
+
+    pool = [
+        cand.Candidate("a", dense_score=0.9, aux_score=0.1, lexical_score=2.0, lexical_rank=2),
+        cand.Candidate("b", dense_score=0.5, aux_score=0.8, lexical_score=4.0, lexical_rank=1),
+        cand.Candidate("c", dense_score=0.1, aux_score=0.9),
+    ]
+    assert weighted_fusion(pool, alpha=0.9) == weighted_fusion(pool, alpha=0.9, aux_weight=0.0)
+    mixed = weighted_fusion(pool, alpha=1.0, aux_weight=0.5)
+    assert mixed["b"] > mixed["a"]  # the second encoder's preference moves the order
+    only_second = weighted_fusion(pool, alpha=1.0, aux_weight=1.0)
+    assert max(only_second, key=only_second.get) == "c"
+    # No second-encoder score anywhere in the pool: the primary alone, never a silent zero.
+    bare = [cand.Candidate(c.doc_id, dense_score=c.dense_score) for c in pool]
+    assert weighted_fusion(bare, alpha=1.0, aux_weight=0.5) == weighted_fusion(bare, alpha=1.0)
+
+
+def test_the_second_encoder_follows_the_primary_cache_policy(monkeypatch):
+    """A cold official run builds the primary without the vector cache; the second encoder must not read one (D17)."""
+    import acis.embed.factory as factory
+
+    seen: list[bool] = []
+
+    def fake_build(config, *, cache=True):
+        seen.append(cache)
+        return HashingEncoder(dim=64)
+
+    monkeypatch.setattr(factory, "build_encoder", fake_build)
+    for primary_cache, expected in ((None, False), (object(), True)):
+        from types import SimpleNamespace
+
+        primary = SimpleNamespace(cache=primary_cache)  # only its cache policy is read here
+        cfg = {**DEFAULT_CONFIG, "model": {"encoder": "hashing", "aux_encoder": "x", "dim": 64}}
+        engine = AcisEngine.from_config(freeze_config(cfg), encoder=primary)
+        assert engine.aux_encoder is not None
+        assert seen[-1] is expected
+
+
+def test_a_strict_run_refuses_a_second_encoder_that_cannot_load(monkeypatch):
+    import pytest
+
+    import acis.embed.factory as factory
+    from acis.core.errors import NotReady
+
+    def broken(config, *, cache=True):
+        raise RuntimeError("no weights")
+
+    monkeypatch.setattr(factory, "build_encoder", broken)
+    run = {**DEFAULT_CONFIG["run"], "strict": True}
+    cfg = {**DEFAULT_CONFIG, "run": run, "model": {"encoder": "hashing", "aux_encoder": "x", "dim": 64}}
+    with pytest.raises(NotReady):
+        _ = AcisEngine.from_config(freeze_config(cfg), encoder=HashingEncoder(dim=64)).aux_encoder
+    lenient = AcisEngine.from_config(
+        freeze_config({**cfg, "run": DEFAULT_CONFIG["run"]}), encoder=HashingEncoder(dim=64)
+    )
+    assert lenient.aux_encoder is None and lenient.counters.get("dense2.unavailable") == 1

@@ -1,4 +1,4 @@
-"""Documentation must not cite evidence that does not exist (CLAUDE.md §4, INV-14).
+"""Documentation must not cite evidence that does not exist (docs/DESIGN_RULES.md, INV-14).
 
 Two classes of false claim are cheap to catch mechanically and were both found by hand during Phase 1:
 
@@ -22,7 +22,7 @@ SRC_PATH = re.compile(r"`(src/acis/[A-Za-z0-9_/]+\.py)`")
 LEDGER_CITATION = re.compile(r"\[ledger:[a-z0-9-]+\]")
 
 DOCS = sorted(
-    [*acis_root().glob("src/acis/*/README.md"), *acis_root().glob("docs/PHASE*_REPORT.md")],
+    [*acis_root().glob("src/acis/*/README.md"), *acis_root().glob("docs/history/*_REPORT.md")],
     key=lambda p: str(p),
 )
 
@@ -73,7 +73,7 @@ def test_every_ledger_citation_names_a_real_row() -> None:
 
 
 def test_every_package_has_a_contract() -> None:
-    """CLAUDE.md §4: a package directory gets a README.md stating its contract."""
+    """docs/DESIGN_RULES.md: a package directory gets a README.md stating its contract."""
     packages = [p for p in (acis_root() / "src" / "acis").iterdir() if p.is_dir() and (p / "__init__.py").is_file()]
     missing = sorted(p.name for p in packages if not (p / "README.md").is_file())
     assert not missing, f"packages without a contract: {missing}"

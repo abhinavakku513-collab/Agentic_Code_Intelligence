@@ -1,4 +1,4 @@
-"""Hostile sources (docs/spec/05 §2, INV-5, CLAUDE.md §4).
+"""Hostile sources (docs/spec/05 §2, INV-5, docs/DESIGN_RULES.md).
 
 Everything a source reads was written by somebody else. The archive, the directory tree and the JSONL file are
 all attacker-controlled in the threat model, so each of these tests is an attack that a naive loader falls for:

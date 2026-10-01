@@ -4,7 +4,7 @@ With `acis fetch` this is the only code that touches the network, and it is the 
 dangerously wrong, so the rules are narrow:
 
 * **Safetensors only.** A `.bin` checkpoint is a pickle, and loading one executes whatever is inside it. The
-  defence is not to load it carefully; it is not to have the file (CLAUDE.md §4).
+  defence is not to load it carefully; it is not to have the file (docs/DESIGN_RULES.md).
 * **A commit, never a tag.** A moving revision can change under a pinned run. The commit is resolved before
   anything downloads and recorded with the per-file hashes, so what was fetched can be named afterwards and
   re-verified offline for the life of the project.
@@ -100,7 +100,7 @@ def fetch_model(
     if not any(name.endswith(".safetensors") for name in wanted):
         raise NotReady(
             f"{card.name} publishes no safetensors weights; a pickle checkpoint is not an acceptable substitute "
-            "(CLAUDE.md §4)",
+            "(docs/DESIGN_RULES.md)",
             skipped=[n for n in skipped if any(fnmatch.fnmatch(n, p) for p in PICKLE_FORMATS)][:5],
         )
 

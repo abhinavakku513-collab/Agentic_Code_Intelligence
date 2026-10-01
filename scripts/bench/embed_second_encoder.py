@@ -64,11 +64,18 @@ def main(argv: list[str] | None = None) -> int:
     queries = apps.load_queries()
     ids = list(apps.dev_query_ids())
     started = time.perf_counter()
-    for n, qid in enumerate(ids, start=1):
+    # Every dev query under the statement route first (the route APPS statements take, and the one the ranker is
+    # trained on), then the generic route for the queries the router sends there: an experiment can start on the
+    # first pass while the second runs, and an out-of-fold re-route finds its vector already cached.
+    plan = [(qid, "statement_like") for qid in ids]
+    for qid in ids:
         normalised, _ = router.normalise_query(queries[qid])
-        route = router.route(normalised)
+        if router.route(normalised) != "statement_like":
+            plan.append((qid, str(router.route(normalised))))
+    for n, (qid, route) in enumerate(plan, start=1):
+        normalised, _ = router.normalise_query(queries[qid])
         encoder.encode(list(query_encoder_texts(config, normalised)), is_query=True, route=route)
-        if n % 50 == 0 or n == len(ids):
+        if n % 50 == 0 or n == len(plan):
             write_progress(
                 args.model,
                 encoder.name,
@@ -76,9 +83,9 @@ def main(argv: list[str] | None = None) -> int:
                 corpus_done=len(docs),
                 corpus_total=len(docs),
                 queries_done=n,
-                queries_total=len(ids),
+                queries_total=len(plan),
             )
-            print(f"queries {n}/{len(ids)} ({time.perf_counter() - started:.0f}s)", flush=True)
+            print(f"queries {n}/{len(plan)} ({time.perf_counter() - started:.0f}s)", flush=True)
     print("done", encoder.stats(), flush=True)
     return 0
 

@@ -23,7 +23,7 @@ def acis_root() -> Path:
 def acis_home() -> Path:
     """Mutable data root: dataset assets, CAS, caches. `$ACIS_HOME`, else `~/.acis/home`.
 
-    Deliberately **outside the repository** (CLAUDE.md §7): worktrees share one copy instead of each carrying
+    Deliberately **outside the repository** (docs/DESIGN_RULES.md): worktrees share one copy instead of each carrying
     gigabytes, and a cache inside the tree would keep tripping the working-tree seal check for files that are not
     ours to begin with.
     """

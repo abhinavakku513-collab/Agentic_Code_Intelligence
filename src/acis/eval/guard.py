@@ -98,7 +98,7 @@ def assert_ids_not_features(feature_names: Iterable[str]) -> None:
 
     Position matters as much as identity here: on the AppsRetrieval corpus the ordinals 0–4,999 are exactly the
     training-partition documents and 5,000–8,764 exactly the held-out ones, so `ordinal < 5000` *is* the
-    train-document detector CLAUDE.md §4 forbids, with no error at all.
+    train-document detector docs/DESIGN_RULES.md forbids, with no error at all.
     """
     # Substring matching would reject legitimate Phase 4 features: `first_match_position` and
     # `term_position_variance` are *within-document* positions and have nothing to do with the corpus ordinal.

@@ -379,11 +379,17 @@ class AcisEngine(VersionedEngineMixin):
         if name and self.encoder is not None:
             from acis.embed.factory import build_encoder  # noqa: PLC0415
 
+            # The second encoder follows the primary's cache policy: a cold official run builds the primary without
+            # the vector cache (D17), and a cached second encoder would quietly turn its timing into a warm one.
+            cached = getattr(self.encoder, "cache", True) is not None
             try:
-                self._aux_encoder = build_encoder(self.config.with_overrides(**{"model.encoder": name}))
-            except Exception:  # noqa: BLE001 — a missing second encoder is a missing channel, never a crash
+                self._aux_encoder = build_encoder(self.config.with_overrides(**{"model.encoder": name}), cache=cached)
+            except Exception as exc:  # noqa: BLE001 — a missing second encoder is a missing channel, never a crash
                 self.counters.incr("dense2.unavailable")
                 self._aux_encoder = None
+                if self.config.strict:
+                    # Strict runs refuse every fallback (INV-7): a configured channel that cannot load aborts.
+                    raise NotReady(f"the configured second encoder {name!r} could not be loaded: {exc}") from exc
         return self._aux_encoder
 
     def _embed_aux(self, texts: Sequence[str]) -> np.ndarray | None:
@@ -406,6 +412,10 @@ class AcisEngine(VersionedEngineMixin):
         """The query under the second encoder — its own instruction per route when its card has one (INV-15)."""
         encoder = self.aux_encoder
         assert encoder is not None
+        if not getattr(encoder, "route_sensitive", True):
+            # Same rule as the primary (`_query_vector`): no instruction format, so every route is one vector, and
+            # keying it per route would only miss the cache.
+            route = "generic"
         texts = query_encoder_texts(self.config, query)
         key = hash_obj(
             {
@@ -699,15 +709,24 @@ class AcisEngine(VersionedEngineMixin):
         rows = [data.position(c.doc_id) for c in pool]
         primary = data.vectors[rows] @ self._query_vector(data.snapshot.snapshot_id, query, route=route)
         secondary = None
+        full_rank = None
         if data.aux_vectors is not None and self.aux_encoder is not None:
-            secondary = data.aux_vectors[rows] @ self._aux_query_vector(data.snapshot.snapshot_id, query, route=route)
+            vector2 = self._aux_query_vector(data.snapshot.snapshot_id, query, route=route)
+            with stage("dense2"):
+                # One exact pass over the snapshot gives every candidate its cosine *and* its whole-snapshot rank
+                # under the second encoder (rank = 1 + documents scoring strictly higher), whichever channel found it.
+                everything = exact_search(vector2.reshape(1, -1), data.aux_vectors)[0]
+                secondary = everything[rows]
+                ordered = np.sort(everything)
+                full_rank = everything.shape[0] - np.searchsorted(ordered, secondary, side="right") + 1
         out = []
         for i, c in enumerate(pool):
-            fields: dict[str, float] = {}
+            fields: dict[str, float | int] = {}
             if c.dense_score != c.dense_score:
                 fields["dense_score"] = float(primary[i])
-            if secondary is not None and c.aux_score != c.aux_score:
+            if secondary is not None:
                 fields["aux_score"] = float(secondary[i])
+                fields["aux_full_rank"] = int(full_rank[i])  # type: ignore[index]
             out.append(_replace(c, **fields) if fields else c)
         return out
 
@@ -747,7 +766,11 @@ class AcisEngine(VersionedEngineMixin):
                 if counters is not None and any(defined.values()):
                     counters.incr("fusion.defined_symbols")
         with stage("fusion"):
-            fused = weighted_fusion(pool, alpha=alpha, beta=beta, defined=defined)
+            aux_weight = float(self.config.get("rank.generic.aux_weight", 0.0) or 0.0)
+            if aux_weight and not any(c.aux_score == c.aux_score for c in pool):
+                # Configured, but this snapshot has no second-encoder vectors: counted, never silent (INV-7).
+                (counters or self.counters).incr("fusion.aux_missing")
+            fused = weighted_fusion(pool, alpha=alpha, beta=beta, defined=defined, aux_weight=aux_weight)
             order = [doc for doc, _ in self._stable_order(data, list(fused.items()))]
             # Spec 02 §6b: for an identifier-like query, units containing that exact identifier come first (still
             # in fused order), then the rest. A shape rule, not a name list (INV-15); nothing matches -> unchanged.
@@ -1081,7 +1104,7 @@ class AcisEngine(VersionedEngineMixin):
                 unit=data.unit_of(doc_id),
                 source=data.text_of(doc_id),  # INV-1: re-read by hash
                 # Never publish the corpus ordinal: on this corpus `ordinal < 5000` is an exact train-partition
-                # detector, and a Phase 4 feature builder reading `hit.signals` would learn it (CLAUDE.md §4).
+                # detector, and a Phase 4 feature builder reading `hit.signals` would learn it (docs/DESIGN_RULES.md).
                 signals={"channel_score": float(score), **signals.get(doc_id, {})},
             )
             for rank, (doc_id, score) in enumerate(ranked, start=1)

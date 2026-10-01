@@ -381,7 +381,7 @@ def run_pipeline(
                 evaluation_time=per_mode[primary],  # the primary mode's own cold time, never a sum (D17)
                 evaluation_time_per_mode=per_mode,
                 run_dir=str(run_dir.resolve()),
-                # One held-out touch per mode: an A+B run spends two of the six (CLAUDE.md §4).
+                # One held-out touch per mode: an A+B run spends two of the six (docs/DESIGN_RULES.md).
                 test_touch_count=len(modes),
             )
             .build()

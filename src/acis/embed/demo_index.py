@@ -11,7 +11,7 @@ prebuilt demo index to ship instead, on three conditions this module enforces:
 
 The pack only fills the content-addressed vector cache. A cold official run never reads that cache, so the pack can
 make a demo fast and can never make a scored number faster. Contents are `.npy` (loaded with `allow_pickle=False`)
-and JSON inside a zip — no pickle anywhere (CLAUDE.md §4).
+and JSON inside a zip — no pickle anywhere (docs/DESIGN_RULES.md).
 """
 
 from __future__ import annotations

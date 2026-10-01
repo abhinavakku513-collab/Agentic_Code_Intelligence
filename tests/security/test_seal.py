@@ -113,7 +113,7 @@ def test_no_held_out_label_file_inside_the_working_tree():
 
 
 def test_caches_live_outside_the_repository():
-    """CLAUDE.md §7: data, CAS and caches sit outside git — and third-party labels never sit next to ours."""
+    """docs/DESIGN_RULES.md: data, CAS and caches sit outside git — and third-party labels never sit next to ours."""
     from acis.core.paths import acis_home, reg_home
 
     root = acis_root().resolve()

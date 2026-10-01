@@ -1,4 +1,4 @@
-"""Fetching and pinning model weights — the model supply chain (D4, D15, CLAUDE.md §4).
+"""Fetching and pinning model weights — the model supply chain (D4, D15, docs/DESIGN_RULES.md).
 
 This is the one place besides `acis fetch` that touches the network, and it is the place where a supply-chain
 mistake would be easiest to make and hardest to see: a pickle-format checkpoint that executes on load, a model
