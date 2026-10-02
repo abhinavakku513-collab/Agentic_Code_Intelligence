@@ -5,9 +5,11 @@
 **P0 retrieval accuracy.** Qwen3-Embedding-0.6B joins gte-modernbert-base as a second dense encoder (ADR-0009): its
 top 300 enter the 500-candidate union, its cosine and whole-corpus rank feed the LambdaRank ranker (refit on the new
 pools), and it carries 0.75 of the generic route's dense term. DEV (APPS train split, all 5,000 queries, out of fold):
-NDCG@10 74.13 → **86.70**, MRR@10 70.93 → **84.19**, Recall@100 94.86 → 98.72 `[ledger:dev-f93aeb265be7]`; candidate
-recall 97.16 % → 99.38 %. Measured and rejected: a third encoder (granite-small-r2, +0.11), a 700-candidate union,
-pseudo-relevance feedback, the statement-only query view, larger rankers, the ranker on every route.
+NDCG@10 74.13 → 86.70, MRR@10 70.93 → 84.19 `[ledger:dev-f93aeb265be7]`; then five gte/Qwen agreement features in the
+ranker: **87.07 / 84.72**, Recall@100 98.76 `[ledger:dev-839fba9f81a6]`; candidate recall 97.16 % → 99.38 %. The
+architecture is frozen at this point; the official TEST run is the final evaluation. Measured and rejected: a third encoder (granite-small-r2, +0.11), a 700-candidate union,
+pseudo-relevance feedback, the statement-only query view, pool-context features, larger rankers, the xendcg
+objective, the ranker on every route. MTEB Mode A and the engine rank DEV queries identically (300/300 top-100 lists).
 
 **Correctness and honesty fixes.** The second encoder follows the primary's cache policy, so a cold official run stays
 cold; a strict run refuses a configured channel that cannot load; a cold run encodes each query once instead of twice;

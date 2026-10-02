@@ -27,9 +27,24 @@ The end-to-end number for the shipped configuration — through `AcisEngine._ran
 - Qwen3-Embedding-0.6B (Apache-2.0, safetensors, no remote code, pinned commit `97b0c614…`) is the second encoder
   (`model.aux_encoder`): its top 300 join the candidate union, its cosine and whole-corpus rank are ranker features
   (`cos2`, `rank_dense2`, `z_cos2`), and it carries 0.75 of the generic route's dense term.
-- The ranker is refit on the new pipeline's own pools (`artifacts/ranker/p0-gte-qwen-pool500.txt`), hyper-parameters
-  unchanged (capacity variants measured within noise or worse).
+- The ranker is refit on the new pipeline's own pools (`artifacts/ranker/p0-gte-qwen-mix-pool500.txt` after the
+  addendum below), hyper-parameters unchanged (capacity variants measured within noise or worse).
 - Mode A (the full pipeline) is the primary submission surface.
+
+## Addendum (2026-10-02) — encoder-agreement features, then freeze
+
+With the gate rule's remaining headroom in *ranking* (gold in the pool for 99.38 % of DEV queries, NDCG@10 86.70),
+five deterministic features comparing the two encoders inside each query's own pool were added to the ranker
+(`mix` group in `acis.rank.candidates`: z_cos + z_cos2, z_cos − z_cos2, log rank ratio, log min rank, pool rank of the
+z-sum). End to end, out of fold: NDCG@10 86.70 → **87.07**, MRR@10 84.19 → **84.72** `[ledger:dev-839fba9f81a6]`;
+paired Δ +0.37 [+0.11, +0.64] NDCG@10 and +0.53 [+0.19, +0.87] MRR@10 — below the +0.5 NDCG@10 bar of the gate rule
+but with a CI clear of zero on both metrics and no measurable cost, so adopted. Measured and not adopted: pool-context
+features (document–document similarity to the pool's top results, near-duplicate counts; +0.25, nothing on top of
+the agreement features), more ranker capacity (31 leaves +0.17, 600 rounds +0.22, both CIs spanning zero), the
+`rank_xendcg` objective (−0.95), truncation 10 (−0.06), the ranker on every route (+0.08 on top). A cross-encoder
+reranker was not pursued: on this CPU it would cost tens of hours on the TEST queries.
+
+**The architecture is frozen here.** The official TEST run is the final evaluation; nothing is tuned on its result.
 
 ## Costs, stated rather than hidden
 

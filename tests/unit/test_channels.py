@@ -212,3 +212,20 @@ def test_a_strict_run_refuses_a_second_encoder_that_cannot_load(monkeypatch):
         freeze_config({**cfg, "run": DEFAULT_CONFIG["run"]}), encoder=HashingEncoder(dim=64)
     )
     assert lenient.aux_encoder is None and lenient.counters.get("dense2.unavailable") == 1
+
+
+def test_encoder_agreement_features_exist_with_a_second_encoder_and_are_nan_without():
+    cols = [cand.FEATURE_NAMES.index(n) for n in cand.GROUPS["mix"]]
+    query = "reverse the words"
+    two = _engine(model={"encoder": "hashing", "aux_encoder": "hashing", "dim": 64}, retrieve={"aux_k": 3})
+    data = two.snapshot_data(two.build_snapshot(DOCS, source="t"))
+    _, pool = two.candidate_pool(data, query, route="generic", want=5)
+    matrix = two.pool_features(data, query, pool)
+    assert np.isfinite(matrix[:, cols]).all()
+    assert all(c.dense_full_rank >= 1 for c in pool)
+    # Pool rank by z_cos + z_cos2 is a permutation of 1..n.
+    assert sorted(matrix[:, cand.FEATURE_NAMES.index("mix_poolrank")].tolist()) == list(range(1, len(pool) + 1))
+    one = _engine()
+    data1 = one.snapshot_data(one.build_snapshot(DOCS, source="t"))
+    _, pool1 = one.candidate_pool(data1, query, route="generic", want=5)
+    assert np.isnan(one.pool_features(data1, query, pool1)[:, cols]).all()

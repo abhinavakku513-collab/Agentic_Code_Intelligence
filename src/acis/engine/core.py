@@ -707,7 +707,12 @@ class AcisEngine(VersionedEngineMixin):
         if not pool or data.vectors is None or self.encoder is None:
             return pool
         rows = [data.position(c.doc_id) for c in pool]
-        primary = data.vectors[rows] @ self._query_vector(data.snapshot.snapshot_id, query, route=route)
+        qvec = self._query_vector(data.snapshot.snapshot_id, query, route=route)
+        # The primary's whole-snapshot scores (one exact pass, as the dense channel does): every candidate's cosine
+        # and its rank over the snapshot, which the encoder-agreement features compare with the second encoder's.
+        whole = exact_search(qvec.reshape(1, -1), data.vectors)[0]
+        primary = whole[rows]
+        primary_rank = whole.shape[0] - np.searchsorted(np.sort(whole), primary, side="right") + 1
         secondary = None
         full_rank = None
         if data.aux_vectors is not None and self.aux_encoder is not None:
@@ -727,6 +732,7 @@ class AcisEngine(VersionedEngineMixin):
             if secondary is not None:
                 fields["aux_score"] = float(secondary[i])
                 fields["aux_full_rank"] = int(full_rank[i])  # type: ignore[index]
+                fields["dense_full_rank"] = int(primary_rank[i])
             out.append(_replace(c, **fields) if fields else c)
         return out
 

@@ -293,7 +293,18 @@ def create_app(engine: Any = None, *, config_path: str = "configs/dev.yaml") -> 
         """The panel as HTML, rendered once from the ledger row; the page inserts it verbatim."""
         from acis.api import benchmarks
 
-        return benchmarks.render_panel(benchmarks.latest_pipeline_runs())
+        # The official TEST block (from a release-candidate ledger row, or "not recorded yet") sits above the DEV
+        # panel and is labelled as such: the two are never merged into one table.
+        return benchmarks.render_official(benchmarks.official_result()) + benchmarks.render_panel(
+            benchmarks.latest_pipeline_runs()
+        )
+
+    @app.get("/v1/benchmarks/official", dependencies=guard)
+    def benchmark_official() -> dict[str, Any]:
+        """The official AppsRetrieval TEST scores as recorded by the official MTEB run, or `available: false`."""
+        from acis.api import benchmarks
+
+        return benchmarks.official_result()
 
     @app.get("/v1/benchmarks/p0/headline", dependencies=guard, response_class=HTMLResponse)
     def benchmark_p0_headline() -> str:

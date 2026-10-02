@@ -36,6 +36,10 @@ GROUPS: dict[str, tuple[str, ...]] = {
     "symbol": ("symbol_hits", "symbol_coverage", "symbol_idf"),
     # Agreement: in how many retrieval channels' own top lists the unit appeared.
     "agree": ("n_channels",),
+    # Agreement and residuals between the two dense encoders, within this query's own pool (ADR-0009):
+    # z_cos + z_cos2, z_cos − z_cos2, log(rank) − log(rank2) and log min(rank, rank2) over the whole snapshot, and the
+    # candidate's rank inside the pool by z_cos + z_cos2. NaN without a second encoder.
+    "mix": ("mix_zsum", "mix_zdiff", "mix_lograt", "mix_logmin", "mix_poolrank"),
 }
 FEATURE_NAMES: tuple[str, ...] = tuple(name for names in GROUPS.values() for name in names)
 #: Monotone constraints: more similarity and more lexical match may never lower a score (spec 02 §4).
@@ -60,6 +64,8 @@ class Candidate:
     #: `rank_dense2` reads this when present, so the feature exists for every candidate, not only for the ones the
     #: second channel happened to put in its own top list.
     aux_full_rank: int = 0
+    #: Rank under the primary encoder over the whole snapshot (0 = not computed); `dense_rank` is only its own list.
+    dense_full_rank: int = 0
     symbol_score: float = NAN
     symbol_rank: int = 0
     meta: Mapping[str, Any] = field(default_factory=dict)
@@ -157,6 +163,10 @@ def feature_matrix(
     lexical_scores = [c.lexical_score for c in candidates]
     top_lex = max((v for v in lexical_scores if v == v), default=NAN)
     z_aux = _standardise([c.aux_score for c in candidates])
+    z_sum = [a + b if (a == a and b == b) else NAN for a, b in zip(z_scores, z_aux, strict=True)]
+    # Rank inside this pool by z_sum (1 = best); stable on ties, NaN where z_sum is undefined.
+    by_sum = sorted((i for i, v in enumerate(z_sum) if v == v), key=lambda i: -z_sum[i])
+    pool_rank = {i: float(r) for r, i in enumerate(by_sum, start=1)}
 
     rows: list[list[float]] = []
     for index, candidate in enumerate(candidates):
@@ -197,6 +207,15 @@ def feature_matrix(
             else NAN,
             "z_cos2": z_aux[index],
             **{name: float((symbols or {}).get(candidate.doc_id, {}).get(name, NAN)) for name in GROUPS["symbol"]},
+            "mix_zsum": z_sum[index],
+            "mix_zdiff": (z_scores[index] - z_aux[index]) if z_sum[index] == z_sum[index] else NAN,
+            "mix_lograt": (math.log(candidate.dense_full_rank) - math.log(candidate.aux_full_rank))
+            if (candidate.dense_full_rank and candidate.aux_full_rank)
+            else NAN,
+            "mix_logmin": math.log(min(candidate.dense_full_rank, candidate.aux_full_rank))
+            if (candidate.dense_full_rank and candidate.aux_full_rank)
+            else NAN,
+            "mix_poolrank": pool_rank.get(index, NAN),
             "n_channels": float(
                 sum(
                     1

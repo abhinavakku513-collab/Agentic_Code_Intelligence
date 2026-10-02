@@ -318,3 +318,8 @@ pre.code.expanded { max-height: none; }
 .bake .barcell { width: 20%; }
 .bake td code { white-space: nowrap; }
 .bake td:first-child { white-space: nowrap; }
+
+/* Official AppsRetrieval TEST result (from the release-candidate ledger row): kept apart from the DEV evaluation. */
+.eval-official { border: 1px solid var(--line); border-left: 4px solid var(--accent, #2563eb); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 16px; background: var(--surface); }
+.eval-official h4 { margin: 0 0 8px; font-size: 14px; }
+.eval-official .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 8px; }

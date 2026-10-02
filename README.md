@@ -63,8 +63,8 @@ Natural-language query
   │
   ▼  3. Candidate union        ≤ 500 candidates (reciprocal-rank cut); every candidate is then scored by EVERY channel
   │
-  ▼  4. Ranking                problem statements → LightGBM LambdaRank over 29 evidence features
-  │                            (both cosines and ranks, BM25, identifier hits, I/O literals, agreement, length …)
+  ▼  4. Ranking                problem statements → LightGBM LambdaRank over 34 evidence features
+  │                            (both cosines and ranks, gte/Qwen agreement, BM25, identifier hits, I/O literals, length …)
   │                            other queries → weighted fusion (Qwen + gte dense, BM25); a lone identifier → exact matches first
   │
   ▼  5. Verified code          every result is re-read from a content-addressed store by its hash (nothing is generated)
@@ -94,7 +94,7 @@ mostly about *ordering*, which is what the learned ranker is for.
 |---|---|---|---|---|
 | [Alibaba-NLP/gte-modernbert-base](https://huggingface.co/Alibaba-NLP/gte-modernbert-base) | `e7f32e3c00f9…` | primary dense encoder (149 M parameters, 768-d) | **active** | Apache-2.0 |
 | [Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) | `97b0c614be4d…` | second dense encoder (596 M parameters, 1024-d, instruction-aware) | **active** | Apache-2.0 |
-| LightGBM LambdaRank (`artifacts/ranker/p0-gte-qwen-pool500.txt`) | in this repository | learned ranker, trained on DEV only | **active** | (our artifact) |
+| LightGBM LambdaRank (`artifacts/ranker/p0-gte-qwen-mix-pool500.txt`) | in this repository | learned ranker, trained on DEV only | **active** | (our artifact) |
 | ibm-granite/granite-embedding-english-r2 / -small-english-r2 | pinned in `configs/models/` | measured candidates | **not used** (measured weaker; no gain on top of Qwen) | Apache-2.0 |
 
 Every model file is pinned by commit **and** per-file SHA-256 in `configs/models/<name>.yaml`; weights load from
@@ -112,11 +112,13 @@ same `AcisEngine._rank_one` the product runs.
 | gte-modernbert-base, dense only (baseline) | 71.03 | 67.46 | 93.78 | `[ledger:dev-a674159a4324]` |
 | previous ACIS pipeline (gte + BM25 + symbols + ranker) | 74.13 | 70.93 | 94.86 | `[ledger:dev-299a3010be5a]` |
 | Qwen3-Embedding-0.6B, dense only | 84.41 | 81.63 | 98.50 | [encoder diagnostics](docs/evidence/p0/encoder_diagnostics_gte_base.json) |
-| **ACIS final pipeline** | **86.70** | **84.19** | **98.72** | `[ledger:dev-f93aeb265be7]` |
+| ACIS + Qwen3 (second encoder, refit ranker, Qwen-weighted fusion) | 86.70 | 84.19 | 98.72 | `[ledger:dev-f93aeb265be7]` |
+| **ACIS final pipeline** (+ gte/Qwen agreement features) | **87.07** | **84.72** | **98.76** | `[ledger:dev-839fba9f81a6]` |
 
-Final vs previous pipeline: **+12.57 NDCG@10** (95 % CI [+11.79, +13.35]) and **+13.26 MRR@10** (paired bootstrap,
-10,000 resamples). Where the remaining DEV errors are: 3,910 queries have the right program at #1, 809 at #2–10,
-250 lower but inside the candidate pool (ranking errors), 31 outside it (retrieval errors) —
+Final vs the previous ACIS pipeline: **+12.94 NDCG@10** (CI [+12.15, +13.73]) and **+13.79 MRR@10** ([+12.90, +14.67]); the last step alone (encoder-agreement
+features) adds +0.37 NDCG@10 (95 % CI [+0.11, +0.64]) and +0.53 MRR@10 ([+0.19, +0.87]) — paired bootstrap, 10,000
+resamples. Where the remaining DEV errors are: 3,968 queries have the right program at #1, 749 at #2–10,
+252 lower but inside the candidate pool (ranking errors), 31 outside it (retrieval errors) —
 [failure buckets](docs/evidence/p0/failure_buckets.json). All measurements: [docs/evidence/p0](docs/evidence/p0/README.md).
 
 ### TEST (official screening: AppsRetrieval test split via MTEB)

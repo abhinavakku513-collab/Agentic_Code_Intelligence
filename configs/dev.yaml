@@ -3,7 +3,8 @@
 run:      {kind: dev, mode: A, strict: false, device: cpu, threads: auto_physical, seed: 0, channel: hybrid}
 data:     {split: train, folds: 5, fold_key: sha256_query_text, dev_h_fold: 4, corpus: full_8765}
 # Second dense encoder (ADR-0009): Qwen3-Embedding-0.6B. Alone on all 5,000 dev queries NDCG@10 84.41 vs gte 71.04
-# (scripts/bench/encoder_diag.py); as ranker features + union channel the served pipeline goes 74.13 -> 86.3 (OOF).
+# (scripts/bench/encoder_diag.py); as ranker features + union channel the served pipeline goes 74.13 -> 86.70; with the gte/Qwen agreement
+# features 87.07 [ledger:dev-839fba9f81a6] (OOF). Frozen.
 model:    {encoder: gte-modernbert-base, dim: 768, config: configs/models/gte-modernbert-base.yaml, numeric_profile: cpu-fp32,
            aux_encoder: qwen3-embedding-0.6b}
 prep:     {query: {version: q1, view: V0, max_tokens: 1024, head: 768, tail: 256}, doc: {version: d1, max_tokens: 1024, head: 768, tail: 256}}
@@ -12,7 +13,7 @@ lexical:  {k1: 1.5, b: 0.75, delta: 0.5, method: lucene, stemmer: english, token
 # 100-candidate union, NDCG@10 74.17 out of fold [ledger:dev-f168f31bc434] (scripts/bench/ladder_experiments.py).
 # + Qwen top 300 (aux_k): pool recall 97.16 -> 99.38 %; a 700 cap reached 99.48 % but ranked worse (86.33 vs 86.62).
 retrieve: {dense_k: 300, lexical_k: 200, symbol_k: 50, aux_k: 300, union_cap: 500, prf: {enabled: false}, top_k_out: 1000}
-rank:     {model: artifacts/ranker/p0-gte-qwen-pool500.txt,   # G5: statement_like route (refit with the Qwen features)
+rank:     {model: artifacts/ranker/p0-gte-qwen-mix-pool500.txt,   # G5: statement_like route (34 features incl. gte/Qwen agreement)
            generic: {alpha: 0.9, symbol_beta: 0.0, aux_weight: 0.75}}
            # aux_weight: Qwen's share of the generic route's dense term. Chosen on the APPS statements the router sends to
            # fusion (+0.30 overall, scripts/bench/feature_lab.py), confirmed on human-written CodeSearchNet-Python

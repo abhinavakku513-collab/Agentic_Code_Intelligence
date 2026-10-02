@@ -63,6 +63,45 @@ def prf_features(q: np.ndarray, d: np.ndarray, pos: np.ndarray, off: np.ndarray,
     return out
 
 
+def mix_features(X: np.ndarray, names: list[str], off: np.ndarray, gte_rank: np.ndarray) -> np.ndarray:
+    """Agreement and residuals between the two dense encoders, within one query's own pool (INV-3).
+
+    Columns: z_cos + z_cos2, z_cos − z_cos2, log(gte whole-corpus rank) − log(Qwen whole-corpus rank),
+    log min(rank, rank2), and the candidate's rank inside the pool by z_cos + z_cos2.
+    """
+    zc, zq, rq = (X[:, names.index(n)] for n in ("z_cos", "z_cos2", "rank_dense2"))
+    out = np.full((len(X), 5), np.nan, dtype=np.float32)
+    out[:, 0] = zc + zq
+    out[:, 1] = zc - zq
+    out[:, 2] = np.log(gte_rank) - np.log(rq)
+    out[:, 3] = np.log(np.minimum(gte_rank, rq))
+    for i in range(len(off) - 1):
+        block = out[off[i] : off[i + 1], 0]
+        order = np.argsort(-np.nan_to_num(block, nan=-1e9), kind="stable")
+        ranks = np.empty(len(block), dtype=np.float32)
+        ranks[order] = np.arange(1, len(block) + 1)
+        out[off[i] : off[i + 1], 4] = ranks
+    return out
+
+
+def context_features(d: np.ndarray, pos: np.ndarray, off: np.ndarray, cos2: np.ndarray, top: int = 5) -> np.ndarray:
+    """Pool context from document–document similarity under one encoder (no query statistics across queries).
+
+    Columns: cosine to the pool's top-1 by the query cosine, mean cosine to the pool's top-`top`, and the number of
+    near-duplicates (document cosine ≥ 0.97) of this candidate inside the pool.
+    """
+    out = np.empty((len(pos), 3), dtype=np.float32)
+    for i in range(len(off) - 1):
+        p = pos[off[i] : off[i + 1]]
+        c = np.nan_to_num(cos2[off[i] : off[i + 1]], nan=-1.0)
+        best = np.argsort(-c, kind="stable")[:top]
+        vec = d[p]
+        sims = vec @ vec[best].T
+        near = (vec @ vec.T >= 0.97).sum(axis=1) - 1
+        out[off[i] : off[i + 1]] = np.stack([sims[:, 0], sims.mean(axis=1), near], axis=1)
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dump", default="base")
@@ -112,6 +151,19 @@ def main(argv: list[str] | None = None) -> int:
         if kind == "enc":  # enc:<tag>
             q, d = _load_vec(spec)
             extra[g] = ([f"{spec}.cos", f"{spec}.z", f"{spec}.rank"], dense_features(q, d, pos, off))
+        elif kind == "mix":  # mix: gte/Qwen agreement and residuals (needs the gte dump for the gte whole rank)
+            q, d = _load_vec("gte-modernbert-base")
+            gte_rank = dense_features(q, d, pos, off)[:, 2]
+            extra[g] = (
+                ["mix.zsum", "mix.zdiff", "mix.lograt", "mix.logmin", "mix.poolrank"],
+                mix_features(X, names, off, gte_rank),
+            )
+        elif kind == "ctx":  # ctx:<tag>: pool context under that encoder's document vectors
+            _, d = _load_vec(spec)
+            extra[g] = (
+                [f"ctx.{spec}.top1", f"ctx.{spec}.top5", f"ctx.{spec}.near"],
+                context_features(d, pos, off, X[:, names.index("cos2")]),
+            )
         elif kind == "prf":  # prf:<tag>:m:beta
             tag, m, beta = spec.split(":")
             q, d = _load_vec(tag)

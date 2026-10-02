@@ -1,16 +1,16 @@
 {
- "variant": "runs/eval/p0-a78309b5f818/per_query.jsonl",
+ "variant": "runs/eval/p0-f010320a9ec0/per_query.jsonl",
  "n_queries": 5000,
  "buckets": {
-  "top1": 3910,
-  "ranking_failure": 250,
-  "top10": 809,
+  "top1": 3968,
+  "ranking_failure": 252,
+  "top10": 749,
   "missing_from_all": 22,
   "union_failure": 9
  },
- "rescued": 634,
- "demoted": 25,
- "long_query_share_of_failures": 0.010676156583629894,
+ "rescued": 638,
+ "demoted": 31,
+ "long_query_share_of_failures": 0.01060070671378092,
  "long_query_share_overall": 0.0108,
  "pool_recall": 0.9938,
  "gold_found_by_other_encoder_only_at_100": {
@@ -18,5 +18,5 @@
   "qwen3-embedding-0.6b": 256
  },
  "gold_has_near_twin_ge_0.97": 34,
- "near_twin_failures": 21
+ "near_twin_failures": 18
 }
