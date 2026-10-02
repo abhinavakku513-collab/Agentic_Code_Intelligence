@@ -1245,21 +1245,27 @@ class AcisEngine(VersionedEngineMixin):
         channel = requested if requested != "auto" else str(self.config.get("run.channel", "auto"))
         seen = counters.snapshot()
         # `ordering` is the machine-readable name of the stage that produced the order; `ordered_by` says it in words.
+        second = getattr(self.aux_encoder, "name", None) if self.aux_encoder_name else None
+        dense_desc = f"dense ({getattr(self.encoder, 'name', 'encoder')} + {second})" if second else "dense"
+        aux_weight = float(self.config.get("rank.generic.aux_weight", 0.0) or 0.0)
+        mix = f", second-encoder share {aux_weight:g}" if (second and aux_weight) else ""
         if channel == "hybrid":
             alpha = self.generic_alpha
             if seen.get("ltr.applied"):
-                ordering, ordered_by = "ltr", "learned ranker over dense + BM25 candidates"
+                ordering, ordered_by = "ltr", f"learned ranker over {dense_desc} + BM25 + identifier candidates"
             elif seen.get("ltr.abstained"):
                 ordering, ordered_by = "ltr_abstained", "dense (the ranker abstained: too little evidence fired)"
             elif seen.get("fusion.identifier_first"):
                 ordering = "identifier_first"
                 ordered_by = (
-                    "exact identifier matches first, then weighted fusion of dense + BM25 "
-                    f"(α = {alpha:g}; generic route)"
+                    f"exact identifier matches first, then weighted fusion of {dense_desc} + BM25 "
+                    f"(α = {alpha:g}{mix}; generic route)"
                 )
             elif seen.get("fusion.applied"):
                 ordering = "fusion"
-                ordered_by = f"weighted fusion of dense + BM25 (α = {alpha:g}; generic route, the ranker stays off)"
+                ordered_by = (
+                    f"weighted fusion of {dense_desc} + BM25 (α = {alpha:g}{mix}; generic route, the ranker stays off)"
+                )
             elif seen.get("fusion.untuned"):
                 ordering, ordered_by = "dense", "dense (generic route; no fusion weight has been tuned)"
             else:
@@ -1273,7 +1279,9 @@ class AcisEngine(VersionedEngineMixin):
             "ordering": ordering,
             "ordered_by": ordered_by,
             "encoder": getattr(self.encoder, "name", "none"),
+            "second_encoder": second,
             "generic_alpha": self.generic_alpha,
+            "generic_aux_weight": aux_weight if second else None,
         }
 
     def _resolve_snapshot(self, req: SearchRequest) -> SnapshotData:

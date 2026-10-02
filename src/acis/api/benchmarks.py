@@ -121,10 +121,27 @@ def latest_pipeline_runs() -> dict[str, Any]:
     }
 
 
+#: The published copy of the served pipeline's per-query artifact. `runs/eval/` is not part of a clone, so a fresh
+#: checkout reads this file instead — accepted only when its bytes hash to the SHA-256 the ledger row pins.
+PUBLISHED_ARTIFACTS = ("docs/evidence/p0/served_pipeline_per_query.jsonl",)
+
+
 def _verify_artifact(relative: str, expected: str) -> dict[str, Any]:
-    path = (acis_root() / relative).resolve()
-    inside = acis_root().resolve() / "runs" / "eval"
+    root = acis_root().resolve()
+    path = (root / relative).resolve()
+    inside = root / "runs" / "eval"
     if not relative or inside not in path.parents or not path.is_file():
+        for published in PUBLISHED_ARTIFACTS:
+            candidate = root / published
+            if expected and candidate.is_file() and hashlib.sha256(candidate.read_bytes()).hexdigest() == expected:
+                return {
+                    "path": published,
+                    "present": True,
+                    "sha256_matches": True,
+                    "sha256": expected,
+                    "ledger_sha256": expected,
+                    "recorded_path": relative,
+                }
         return {"path": relative, "present": False, "sha256_matches": False, "ledger_sha256": expected}
     actual = hashlib.sha256(path.read_bytes()).hexdigest()
     return {
@@ -141,7 +158,7 @@ def _records(relative: str, expected: str) -> tuple[dict[str, Any], ...]:
     status = _verify_artifact(relative, expected)
     if not status["present"] or not status["sha256_matches"]:
         raise NotFound("the per-query artifact is missing or does not match the hash its ledger row pins")
-    return _parse(str((acis_root() / relative).resolve()), str(status["sha256"]))
+    return _parse(str((acis_root() / str(status["path"])).resolve()), str(status["sha256"]))
 
 
 @lru_cache(maxsize=4)

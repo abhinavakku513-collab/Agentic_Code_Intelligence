@@ -1,15 +1,26 @@
-# Kit changelog
+# Changelog
 
-## v1.1 — 2026-09-20 (ADR-0001…0003; source: `docs/reference/ACIS_Kit_Audit_and_Winning_Plan.md` + patch)
-- **Enforcement**: hook commands switched to the string form; `/canary` (G0.0) proves the hooks execute; guard v1.1 (11 reproducible bypasses/false positives fixed, 40 + 3 pinned gap rows in `tests/security`) plus the physical-seal directory `~/.acis-sealed`; `ask` rules on every TEST-touching command; official runs are owner-launched.
-- **Seal**: TEST labels live outside the working tree; dev loads `split="train"` only; the official run alone gets its own `HF_HOME` (D19). Wording changed from "provably sealed" to "outside the tree; hooks catch accidents".
-- **Plan**: adaptation moved before hybrid/LTR; RC0 = best frozen dense, Mode B (was a BM25 baseline); Track B (P1/Bonus/demo) runs in parallel; phases 0–5, B1–B4, 6.
-- **Statistics**: gates on all 5,000 TRAIN queries (non-fit) or K-fold OOF (trained); DEV-H is a counted once-per-milestone confirmation (simulation: +0.75 pt accepted 87 % of the time at n = 5,000 vs 34 % at n = 1,000 [E]).
-- **Arbitrary queries**: INV-15, per-route instruction, routing v1.1, generic extractors with group dropout, α-interpolated adaptation, gate G-OOD, blind-query protocol, claim N8; NL version intent is a hint.
-- **Ops**: `scripts/run_detached.sh` / `job_status.sh`, `docs/GPU_HANDOFF.md`, `docs/TRIAGE.md` (floors F0–F4, cut order), `training-engineer` and `demo-engineer` subagents, `/gpu-handoff` skill, update-time target and commit-stream demo.
-- **Spec fixes**: `min(top_k, N)` (INV-10); TEST budget 6 = 5 + post-hoc clean-pool; G0.6 defined; D1 on a held-out fold; config paths from the repo root; encoder rule gains a 3.0-pt tolerance when the best candidate's cold pass exceeds 2 h.
-- **Scope**: PPT and demo video are owner-made (`docs/submission/OWNER_HANDOFF.md`); `/evidence-pack` and `/preflight` no longer cover PPT items.
-- **Density**: CLAUDE.md trimmed to ≈ 4k tokens (details in specs 02–10); ADR-0001 dependency allowlist; Phase-0 seeds (`pyproject.toml`, `Makefile`, `tests/conftest.py`, `configs/*`, `src/acis/{__init__,cli}.py`); `docs/reference/` now holds the audit, the earlier blueprint/skeleton and the third-party-score sources.
+## v1.0.0 — 2026-10-02 (final submission)
 
-## v1.0 — 2026-09-20
-Initial kit: CLAUDE.md, AGENTS.md, specs 01–08, 11 subagents, 11 skills, 6 rules, hooks, settings.
+**P0 retrieval accuracy.** Qwen3-Embedding-0.6B joins gte-modernbert-base as a second dense encoder (ADR-0009): its
+top 300 enter the 500-candidate union, its cosine and whole-corpus rank feed the LambdaRank ranker (refit on the new
+pools), and it carries 0.75 of the generic route's dense term. DEV (APPS train split, all 5,000 queries, out of fold):
+NDCG@10 74.13 → **86.70**, MRR@10 70.93 → **84.19**, Recall@100 94.86 → 98.72 `[ledger:dev-f93aeb265be7]`; candidate
+recall 97.16 % → 99.38 %. Measured and rejected: a third encoder (granite-small-r2, +0.11), a 700-candidate union,
+pseudo-relevance feedback, the statement-only query view, larger rankers, the ranker on every route.
+
+**Correctness and honesty fixes.** The second encoder follows the primary's cache policy, so a cold official run stays
+cold; a strict run refuses a configured channel that cannot load; a cold run encodes each query once instead of twice;
+`rank_dense2` is the whole-corpus rank for every candidate; the CLI, API and UI name both encoders and the fusion mix.
+
+**Submission tooling.** `make models` (pinned download + verification), `make rc-smoke` (fills the sealed dataset cache
+through MTEB's own loader, then proves the offline load), per-encoder prebuilt vector packs (`acis demo-index
+--encoder`), Mode A as the primary official surface, P0 evidence published in `docs/evidence/p0/`.
+
+**Repository.** Beginner README; internal AI-assistant tooling and planning notes removed from the published tree;
+development reports kept in `docs/history/`; design rules published as `docs/DESIGN_RULES.md`.
+
+## Earlier development
+
+Phase reports and the previous acceptance report are in `docs/history/`. The previous served pipeline (gte + BM25 +
+exact symbols + LambdaRank) measured NDCG@10 74.13 · MRR@10 70.93 on DEV `[ledger:dev-299a3010be5a]`.

@@ -331,7 +331,8 @@ def cmd_search(args: argparse.Namespace) -> int:
         return 0
 
     stand_in = "" if encoder.submission_capable else "  (stand-in: not submission-capable)"
-    print(f"encoder  : {encoder.name}{stand_in}")
+    second = response.explanation.get("second_encoder") if response.explanation else None
+    print(f"encoder  : {encoder.name}{stand_in}" + (f" + {second} (second encoder)" if second else ""))
     opened = "opened" if args.repo else "built"
     version = f"  version {snapshot.version_id}" if args.repo else ""
     print(f"snapshot : {snapshot.snapshot_id}{version}  {snapshot.n_units} units, {opened} in {build_seconds:.1f}s")
