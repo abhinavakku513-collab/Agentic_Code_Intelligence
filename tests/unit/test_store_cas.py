@@ -197,7 +197,15 @@ def test_a_v1_catalog_is_migrated_to_per_repository_snapshot_keys_without_losing
     path = layout.catalog_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as raw:
-        raw.executescript(catalog.SCHEMA.replace("    meta        TEXT NOT NULL DEFAULT '{}',\n    PRIMARY KEY (repo_id, snapshot_id)", "    meta        TEXT NOT NULL DEFAULT '{}'").replace("snapshot_id TEXT NOT NULL,\n    repo_id     TEXT NOT NULL REFERENCES", "snapshot_id TEXT PRIMARY KEY,\n    repo_id     TEXT NOT NULL REFERENCES"))
+        raw.executescript(
+            catalog.SCHEMA.replace(
+                "    meta        TEXT NOT NULL DEFAULT '{}',\n    PRIMARY KEY (repo_id, snapshot_id)",
+                "    meta        TEXT NOT NULL DEFAULT '{}'",
+            ).replace(
+                "snapshot_id TEXT NOT NULL,\n    repo_id     TEXT NOT NULL REFERENCES",
+                "snapshot_id TEXT PRIMARY KEY,\n    repo_id     TEXT NOT NULL REFERENCES",
+            )
+        )
         raw.execute("INSERT INTO repos VALUES ('a', 'units', 0, '{}')")
         raw.execute("INSERT INTO snapshots VALUES ('s_1', 'a', 'v1', 'ACTIVE', 7, '', '', 0, '{}')")
         raw.execute("PRAGMA user_version = 1")

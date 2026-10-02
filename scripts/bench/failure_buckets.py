@@ -116,7 +116,14 @@ def main(argv: list[str] | None = None) -> int:
         "rescued": sum(r["rescued"] for r in rows),
         "demoted": sum(r["demoted"] for r in rows),
         "long_query_share_of_failures": float(
-            np.mean([r["long_query"] for r in rows if r["bucket"] in ("ranking_failure", "union_failure", "missing_from_all")] or [0])
+            np.mean(
+                [
+                    r["long_query"]
+                    for r in rows
+                    if r["bucket"] in ("ranking_failure", "union_failure", "missing_from_all")
+                ]
+                or [0]
+            )
         ),
         "long_query_share_overall": float(np.mean([r["long_query"] for r in rows])),
         "pool_recall": float(np.mean([r["in_pool"] for r in rows])),
@@ -129,7 +136,9 @@ def main(argv: list[str] | None = None) -> int:
     sims[np.arange(len(gold)), gold] = -1
     twin = sims.max(1)
     summary["gold_has_near_twin_ge_0.97"] = int((twin >= 0.97).sum())
-    summary["near_twin_failures"] = int(sum(1 for r, t in zip(rows, twin, strict=True) if t >= 0.97 and r["bucket"] != "top1"))
+    summary["near_twin_failures"] = int(
+        sum(1 for r, t in zip(rows, twin, strict=True) if t >= 0.97 and r["bucket"] != "top1")
+    )
     out = acis_root() / args.out
     out.with_suffix(".jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     out.with_suffix(".json").write_text(json.dumps(summary, indent=1))

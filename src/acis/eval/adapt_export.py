@@ -20,7 +20,7 @@ Four rules, each tested:
   positive document is absent from every negative pool.
 * **Negatives come only from labelled documents.** The pool is the positives of kept dev queries, so training never
   shows the model an unlabelled document — which is what keeps a learned "is this a train solution" signal
-  (docs/DESIGN_RULES.md) from being trainable at all. Each negative carries its fold, so a fold model refuses the held-out
+  (DESIGN_RULES) from being trainable at all. Each negative carries its fold, so a fold model refuses the held-out
   fold's documents and its out-of-fold score stays honest.
 * **False negatives are filtered** (spec 02 §6): a sibling problem's solution (statement 5-gram Jaccard ≥ 0.7), a
   near-copy of the positive by embedding (cosine > 0.92) or by tokens (Jaccard > 0.8) is not a negative.

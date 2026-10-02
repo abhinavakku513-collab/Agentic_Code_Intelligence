@@ -55,9 +55,7 @@ def main() -> int:
     rb = gold_ranks(scores[base], gold)
     for key in keys[1:]:
         ro = gold_ranks(scores[key], gold)
-        report[key]["marginal_over_" + base] = {
-            f"@{k}": int(((ro <= k) & (rb > k)).sum()) for k in (10, 100, 300, 500)
-        }
+        report[key]["marginal_over_" + base] = {f"@{k}": int(((ro <= k) & (rb > k)).sum()) for k in (10, 100, 300, 500)}
         report[key]["base_only"] = {f"@{k}": int(((rb <= k) & (ro > k)).sum()) for k in (10, 100, 300, 500)}
         sb = scores[base]
         so = scores[key]

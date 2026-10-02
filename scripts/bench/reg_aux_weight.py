@@ -38,9 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--grid", default="0,0.5,0.75,1.0")
     args = parser.parse_args(argv)
     grid = [float(w) for w in args.grid.split(",")]
-    config = load_frozen_config(args.config).with_overrides(
-        **{"model.aux_encoder": args.aux, "run.channel": "hybrid"}
-    )
+    config = load_frozen_config(args.config).with_overrides(**{"model.aux_encoder": args.aux, "run.channel": "hybrid"})
     engine = AcisEngine.from_config(config, encoder=build_encoder(config))
     corpus, splits = load_task(args.task)
     started = time.perf_counter()

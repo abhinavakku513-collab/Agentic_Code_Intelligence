@@ -39,7 +39,10 @@ def main(argv: list[str] | None = None) -> int:
     engine = AcisEngine.from_config(config, encoder=enc)
     corpus = apps.load_corpus()
     prepared = prepared_documents(config, [s.text for s in corpus])
-    keys = [enc._cache_key(enc._render(t, is_query=False, route="generic"), is_query=False, route="generic") for t in prepared]
+    keys = [
+        enc._cache_key(enc._render(t, is_query=False, route="generic"), is_query=False, route="generic")
+        for t in prepared
+    ]
     cached = [i for i, k in enumerate(keys) if enc.cache.path_for(k).is_file()]
     print(f"cached docs: {len(cached)}", flush=True)
     sub_docs = np.asarray(enc.encode([prepared[i] for i in cached], is_query=False), dtype=np.float32)
@@ -79,8 +82,13 @@ def main(argv: list[str] | None = None) -> int:
         return (s - s.mean(1, keepdims=True)) / s.std(1, keepdims=True)
 
     sg, sp = gq @ gd.T, qv @ sub_docs.T
-    report = {"n_docs": len(cached), "n_queries": len(sample), "seconds_per_query": (time.perf_counter() - started) / len(sample),
-              "gte": summary(sg), args.key: summary(sp)}
+    report = {
+        "n_docs": len(cached),
+        "n_queries": len(sample),
+        "seconds_per_query": (time.perf_counter() - started) / len(sample),
+        "gte": summary(sg),
+        args.key: summary(sp),
+    }
     for w in (0.3, 0.5, 1.0, 2.0):
         report[f"z_gte+{w}x"] = summary(zs(sg) + w * zs(sp))
     print(json.dumps(report, indent=1), flush=True)

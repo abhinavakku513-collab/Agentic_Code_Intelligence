@@ -6,7 +6,7 @@ Verified layout at the pinned revision: `corpus` and `queries` each hold 8,765 r
 official task does — unlabelled documents are distractors, which is what makes the dev task mirror the real one.
 
 **The `partition` column is metadata, never a feature.** Nothing downstream of these loaders may see it: a filter or
-prior that knows "this document belongs to the training partition" is forbidden (docs/DESIGN_RULES.md, INV-4). It is exposed
+prior that knows "this document belongs to the training partition" is forbidden (DESIGN_RULES, INV-4). It is exposed
 only to `dataset_audit()`, which writes a report a human reads.
 """
 
@@ -320,7 +320,7 @@ def dataset_audit() -> dict[str, Any]:
         "python_parse": {"ok": parse_ok, "failed": len(docs) - parse_ok, "fail_examples": parse_fail_examples},
         "alternate_solutions": _alternate_solution_availability(),
         "notes": [
-            "partition counts are for this report only; no feature, filter or prior may read them (docs/DESIGN_RULES.md)",
+            "partition counts are for this report only; no feature, filter or prior may read them (DESIGN_RULES)",
             "the corpus holds both partitions, so unlabelled documents act as distractors (docs/spec/03 §5)",
         ],
     }

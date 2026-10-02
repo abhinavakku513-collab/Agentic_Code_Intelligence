@@ -1,5 +1,3 @@
-
-
 def test_a_row_appended_after_another_is_not_marked_dirty():
     """The refusal check exempted the ledger but the flag written into rows did not, so every second gate row of a
     batch read `dirty: true` from a clean tree — which is how a clean re-measure came to look like an integrity
