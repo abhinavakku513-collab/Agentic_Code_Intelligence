@@ -284,3 +284,19 @@ def test_a_real_runtime_may_ship_unlike_the_stand_in():
 
     assert make_runtime().submission_capable
     assert not HashingEncoder().submission_capable
+
+
+def test_a_cold_run_encodes_a_repeated_query_once_and_never_memoises_documents():
+    """With no persistent cache (a cold official run) routing and the dense channel encode the same query text:
+    one forward pass must serve both. Documents are never memoised (each is encoded once per run anyway)."""
+    rt = make_runtime(cache=None)
+    first = rt.encode(["find the longest path"], is_query=True)
+    calls = rt.forward_calls
+    again = rt.encode(["find the longest path"], is_query=True)
+    assert rt.forward_calls == calls  # served from this process's memo
+    np.testing.assert_array_equal(first, again)
+    rt.encode(["def f(): pass"], is_query=False)
+    rt.encode(["def f(): pass"], is_query=False)
+    assert rt.forward_calls == calls + 2
+    # A fresh runtime (a new process) starts empty: the run stays cold.
+    assert make_runtime(cache=None)._session_queries == {}

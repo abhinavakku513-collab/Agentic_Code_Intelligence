@@ -148,6 +148,8 @@ def _weights_digest(model_dir: Path) -> str:
 #: stage (`encode_wait`), so a queue is never mistaken for a slow model. It cannot change a vector: each input is
 #: still encoded on its own rows, exactly as before.
 _FORWARD_LOCK = threading.Lock()
+#: Upper bound on the in-process query memo used when there is no persistent cache (~16 MB at 1,024 dimensions).
+SESSION_QUERY_LIMIT = 4096
 
 
 @dataclass(slots=True)
@@ -165,6 +167,10 @@ class EncoderRuntime:
     threads: int = 0
     forward_calls: int = 0
     rows_encoded: int = 0
+    #: Query vectors computed by *this process* when no persistent cache is configured (a cold official run).
+    #: Routing and the dense channel encode the same query text; without this a cold run paid two forward passes
+    #: per query for one vector. It starts empty in every process, so a cold run stays cold (D17).
+    _session_queries: dict[str, np.ndarray] = field(default_factory=dict, repr=False)
 
     def __post_init__(self) -> None:
         self.threads = apply_threads(self.threads or resolve_threads("auto_physical"))
@@ -274,6 +280,10 @@ class EncoderRuntime:
             for position, vector in found.items():
                 out[todo[position]] = vector
             todo = [todo[position] for position in missing]
+        elif is_query:
+            for i in [i for i in todo if keys[i] in self._session_queries]:
+                out[i] = self._session_queries[keys[i]]
+            todo = [i for i in todo if out[i] is None]
 
         if todo:
             with stage("encode_wait"):
@@ -282,6 +292,11 @@ class EncoderRuntime:
                 self._encode_rows(todo, rendered, keys, out)
             finally:
                 _FORWARD_LOCK.release()
+            if self.cache is None and is_query:
+                if len(self._session_queries) > SESSION_QUERY_LIMIT:
+                    self._session_queries.clear()  # bounded: a long-lived process never grows without limit
+                for i in todo:
+                    self._session_queries[keys[i]] = out[i]  # type: ignore[assignment]
 
         # Fill every row from its representative.
         for index, key in enumerate(keys):

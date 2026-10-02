@@ -62,7 +62,7 @@ def verify_official(run_dir: str | Path) -> Any:
     return verify_submission(run_dir, qrels=load_holdout_qrels())
 
 
-def smoke_test_offline_load() -> dict[str, Any]:
+def smoke_test_offline_load(*, offline: bool = True) -> dict[str, Any]:
     """OWNER, BEFORE RC DAY. Prove the sealed cache can load the task offline.
 
     The official run is the one thing that cannot be debugged while it happens, and its very first step is a data
@@ -73,8 +73,11 @@ def smoke_test_offline_load() -> dict[str, Any]:
     _require_sealed_environment()
     import os  # noqa: PLC0415
 
-    os.environ["HF_HUB_OFFLINE"] = "1"
-    os.environ["HF_DATASETS_OFFLINE"] = "1"
+    if offline:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["HF_DATASETS_OFFLINE"] = "1"
+    # `offline=False` is the warm step: the same load with the network allowed, in a process whose HF_HOME already
+    # points at the seal, so mteb's own loader fills the sealed datasets cache exactly as the offline run reads it.
     import mteb  # noqa: PLC0415
 
     from acis.appsdata.sources import APPS  # noqa: PLC0415
@@ -90,7 +93,7 @@ def smoke_test_offline_load() -> dict[str, Any]:
         "n_corpus": len(data["corpus"]),
         "n_queries": len(data["queries"]),
         "n_qrels": len(data["relevant_docs"]),
-        "offline": True,
+        "offline": offline,
     }
 
 
@@ -102,9 +105,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="acis.eval.final", description=__doc__)
     parser.add_argument("run_dir", nargs="?", default="")
     parser.add_argument("--smoke", action="store_true", help="prove the sealed cache loads the task offline")
+    parser.add_argument(
+        "--warm", action="store_true", help="with --smoke: load once with the network allowed (fills the sealed cache)"
+    )
     args = parser.parse_args(argv)
     if args.smoke:
-        print(json.dumps(smoke_test_offline_load(), indent=2, sort_keys=True))
+        print(json.dumps(smoke_test_offline_load(offline=not args.warm), indent=2, sort_keys=True))
         return 0
     if not args.run_dir:
         parser.error("a run directory is required unless --smoke is given")

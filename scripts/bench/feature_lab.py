@@ -120,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"unknown group {g}")
         print(f"built {g} in {time.perf_counter() - t:.0f}s", flush=True)
 
-    i_cos, i_bm = names.index("cos"), names.index("bm25")
+    i_cos, i_bm, i_cos2 = names.index("cos"), names.index("bm25"), names.index("cos2")
     base_groups = {g: [names.index(n) for n in cols] for g, cols in GROUPS.items()}
     results: list[dict[str, Any]] = []
     all_ranks: dict[str, list[int]] = {}
@@ -173,11 +173,19 @@ def main(argv: list[str] | None = None) -> int:
                 orig = X[off[i] : off[i + 1]]
                 if routes[i] != "statement_like" and not rank_all:
                     c, b = orig[:, i_cos], orig[:, i_bm]
-                    lo, hi = np.nanmin(c), np.nanmax(c)
-                    mm = (c - lo) / (hi - lo) if hi > lo else np.zeros_like(c)
+
+                    def minmax(v: np.ndarray) -> np.ndarray:
+                        lo, hi = np.nanmin(v), np.nanmax(v)
+                        return np.nan_to_num((v - lo) / (hi - lo)) if hi > lo else np.zeros_like(v)
+
+                    mm = minmax(c)
+                    w = float(spec.get("fusion_aux_weight", 0.0))
+                    if w and np.isfinite(orig[:, i_cos2]).any():  # the served fusion's second-encoder mix
+                        mm = (1 - w) * mm + w * minmax(orig[:, i_cos2])
                     bmax = np.nanmax(b) if np.isfinite(b).any() else np.nan
                     bn = np.nan_to_num(b / bmax) if bmax and bmax > 0 else np.zeros_like(c)
-                    s = 0.9 * mm + 0.1 * bn
+                    alpha = float(spec.get("fusion_alpha", 0.9))
+                    s = alpha * mm + (1 - alpha) * bn
                 else:
                     s = booster.predict(full[off[i] : off[i + 1]])
                 order_of[i] = cand[np.argsort(-s, kind="stable")]

@@ -1,0 +1,15 @@
+{
+ "gold_in_pool": 4969,
+ "gold_in_channel_list": {
+  "dense_gte": 4840,
+  "bm25": 3167,
+  "qwen": 4958,
+  "symbols": 1398
+ },
+ "gold_found_only_by": {
+  "dense_gte": 5,
+  "bm25": 4,
+  "qwen": 108,
+  "symbols": 0
+ }
+}

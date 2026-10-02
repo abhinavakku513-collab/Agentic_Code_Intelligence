@@ -1,13 +1,12 @@
-# Phase-0 SEED — the toolchain skeleton the hooks, skills and Makefile presume.
-# Phase 0 turns it into a locked environment (`uv lock` with hashes); versions below are lower bounds except mteb (pinned, verified 2.21.0).
-# Dependencies follow docs/adr/0001-dependency-allowlist.md; anything else needs an ADR. CPU-only torch index: configure in Phase 0 (uv index) and record in ADR-0001.
+# The environment is locked (`uv.lock`, hashes); versions below are lower bounds except mteb (pinned, verified 2.21.0).
+# Dependencies follow docs/adr/0001-dependency-allowlist.md; CPU-only torch comes from the PyTorch CPU index below.
 [build-system]
 requires = ["hatchling>=1.24"]
 build-backend = "hatchling.build"
 
 [project]
 name = "acis"
-version = "0.0.0"
+version = "1.0.0"
 description = "ACIS — Agentic Code Intelligence: a local, offline, CPU-first code-retrieval engine"
 requires-python = ">=3.11,<3.13"
 dependencies = [

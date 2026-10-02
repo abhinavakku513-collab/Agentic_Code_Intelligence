@@ -21,10 +21,16 @@ bold() { printf '\n\033[1m%s\033[0m\n\033[2m%s\033[0m\n' "$1" "$(printf '─%.0s
 
 # The prebuilt demo index (D17, spec 09 R9): on a clean machine it saves embedding the whole corpus before the
 # first answer. Verified on import (checksums, model fingerprint, 1 % recomputed); a no-op once imported.
+# One pack per encoder: gte-modernbert-base (primary) and Qwen3-Embedding-0.6B (second encoder).
 DEMO_INDEX="${DEMO_INDEX:-dist/acis-demo-index.zip}"
+DEMO_INDEX_QWEN="${DEMO_INDEX_QWEN:-dist/acis-demo-index-qwen.zip}"
 if [ -f "$DEMO_INDEX" ]; then
   bold "0 · the prebuilt demo index"
   $PY acis demo-index import "$DEMO_INDEX" || echo "  (demo index not imported; the corpus will be embedded on first use)"
+fi
+if [ -f "$DEMO_INDEX_QWEN" ]; then
+  $PY acis demo-index import "$DEMO_INDEX_QWEN" --encoder qwen3-embedding-0.6b \
+    || echo "  (second-encoder demo index not imported; the corpus will be embedded on first use)"
 fi
 
 bold "1 · P0 · free-text retrieval over the APPS corpus"

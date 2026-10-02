@@ -39,12 +39,14 @@ def full_rank(q: np.ndarray, d: np.ndarray, gold: np.ndarray) -> np.ndarray:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--ranks", required=True, help="feature-lab ranks file in runs/lab")
-    parser.add_argument("--variant", required=True)
-    parser.add_argument("--encoders", default="gte-modernbert-base,granite-embedding-small-english-r2")
+    parser.add_argument("--ranks", default="", help="feature-lab ranks file in runs/lab (or use --artifact)")
+    parser.add_argument("--variant", default="")
+    parser.add_argument("--artifact", default="", help="eval_pipeline per_query.jsonl: final ranks of the served run")
+    parser.add_argument("--dump", default="base", help="pools dump in runs/lab (ranker_lab.py build)")
+    parser.add_argument("--encoders", default="gte-modernbert-base,qwen3-embedding-0.6b")
     parser.add_argument("--out", default="runs/lab/failure_buckets")
     args = parser.parse_args(argv)
-    z = np.load(LAB / "base.npz")
+    z = np.load(LAB / f"{args.dump}.npz")
     X, off, pos = z["X"], z["offsets"], z["pos"]
     names = [str(n) for n in z["feature_names"]]
     qids = [str(q) for q in z["qids"]]
@@ -52,7 +54,14 @@ def main(argv: list[str] | None = None) -> int:
     qrels = dev_qrels(qids)
     col = {d: i for i, d in enumerate(doc_ids)}
     gold = np.array([col[next(d for d, r in qrels[q].items() if r > 0)] for q in qids])
-    final = np.array(json.loads((LAB / args.ranks).read_text())["ranks"][args.variant])
+    if args.artifact:
+        served = {
+            r["query_id"]: r["rank_full"] or 10**6
+            for r in map(json.loads, (acis_root() / args.artifact).read_text("utf-8").splitlines())
+        }
+        final = np.array([served[q] for q in qids])
+    else:
+        final = np.array(json.loads((LAB / args.ranks).read_text())["ranks"][args.variant])
     queries = apps.load_queries()
 
     enc_ranks = {}
@@ -101,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     d = gte["docs"]
     counts = Counter(r["bucket"] for r in rows)
     summary = {
-        "variant": args.variant,
+        "variant": args.variant or args.artifact,
         "n_queries": len(rows),
         "buckets": dict(counts),
         "rescued": sum(r["rescued"] for r in rows),

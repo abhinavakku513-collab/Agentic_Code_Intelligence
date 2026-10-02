@@ -390,6 +390,9 @@ def cmd_demo_index(args: argparse.Namespace) -> int:
     if not apps.is_available():
         raise NotReady("the APPS corpus is not fetched; run `make fetch` first")
     config = load_frozen_config(args.config)
+    if getattr(args, "encoder", ""):
+        # One pack per encoder: the P0 pipeline has two (the primary and `model.aux_encoder`).
+        config = config.with_overrides(**{"model.encoder": args.encoder})
     runtime = build_encoder(config)
     if not hasattr(runtime, "document_cache_key"):
         raise InvalidInput("a demo index needs a real encoder; the configured one is the stand-in")

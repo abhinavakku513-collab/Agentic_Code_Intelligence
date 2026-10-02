@@ -177,6 +177,9 @@ def build_parser() -> argparse.ArgumentParser:
     demo_idx.add_argument("path", nargs="?", default="dist/acis-demo-index.zip")
     demo_idx.add_argument("--config", default="configs/dev.yaml")
     demo_idx.add_argument("--verify-fraction", type=float, default=0.01, help="share recomputed on import")
+    demo_idx.add_argument(
+        "--encoder", default="", help="card key of the encoder the pack is for (default: the config's primary encoder)"
+    )
 
     train = sub.add_parser("train", help="Phase 3 GPU hand-off: export the training bundle, or import its results")
     train.add_argument("action", choices=["export", "import"])

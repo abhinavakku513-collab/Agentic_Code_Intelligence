@@ -2,24 +2,25 @@
 # Its ranking-relevant part is hashed into ModelMeta.revision, so any edit is a new revision: change it only via a
 # gate decision, and never between an RC's run and its verification.
 #
-# Both surfaces run from this one file (D8). Mode B (RC0) is the frozen dense encoder: it reads only `model` and
-# `prep`. Mode A adds what the gates accepted: the code-aware BM25 channel (G2), the cross-fitted LambdaRank
-# ranker refit on all 5,000 dev queries (G5), and routing v1.1, which keeps the ranker off queries unlike the
-# statements it was trained on (spec 10 §4). `primary_mode` stays B until G-AB is recorded.
+# Both surfaces run from this one file (D8). Mode A — the submitted surface — is the full pipeline: gte-modernbert-base
+# and Qwen3-Embedding-0.6B dense channels (ADR-0009), code-aware BM25 (G2), exact symbols, a 500-candidate union, the
+# cross-fitted LambdaRank ranker refit on all 5,000 dev queries (G5) and routing v1.1 (spec 10 §4). Mode B is the
+# honest `encode()` surface of the primary encoder alone. G-AB: Mode A is primary — on all 5,000 dev queries, out of
+# fold, the pipeline beats the primary encoder's dense ranking by ~15 NDCG@10 points (see README, P0 results).
 #
 # Query prep is the frozen G1 default (V0, 1024 = 768 head + 256 tail) until G1 is decided on all 5,000 queries.
-run:      {mode: AB, primary_mode: B, strict: true, device: cpu, threads: auto_physical, seed: 0, channel: hybrid,
+run:      {mode: A, primary_mode: A, strict: true, device: cpu, threads: auto_physical, seed: 0, channel: hybrid,
            cold_official: true, test_touch_budget: 6}
 model:    {encoder: gte-modernbert-base, dim: 768, config: configs/models/gte-modernbert-base.yaml,
-           numeric_profile: cpu-fp32}
+           numeric_profile: cpu-fp32, aux_encoder: qwen3-embedding-0.6b}
 prep:     {query: {version: q1, view: V0, max_tokens: 1024, head: 768, tail: 256},
            doc:   {version: d1, max_tokens: 1024, head: 768, tail: 256}}
 lexical:  {k1: 1.5, b: 0.75, delta: 0.5, method: lucene, stemmer: english, tokenizer: code}   # G2
 # Candidate union: dense 300 + BM25 200 + exact symbols 50, cut to 500 by RRF; pool recall 97.16 vs 92.94 at the old
 # 100-candidate union, NDCG@10 74.17 out of fold [ledger:dev-f168f31bc434] (scripts/bench/ladder_experiments.py).
-retrieve: {dense_k: 300, lexical_k: 200, symbol_k: 50, union_cap: 500, prf: {enabled: false}, top_k_out: 1000}   # G4 undecided: off
-rank:     {model: artifacts/ranker/p0-gte-pool500-symbols.txt,   # G5: statement_like route
-           generic: {alpha: 0.9, symbol_beta: 0.0}}   # beta tuned 0.05 on CosQA valid moved no held-out set
+retrieve: {dense_k: 300, lexical_k: 200, symbol_k: 50, aux_k: 300, union_cap: 500, prf: {enabled: false}, top_k_out: 1000}   # G4 undecided: off
+rank:     {model: artifacts/ranker/p0-gte-qwen-pool500.txt,   # G5: statement_like route
+           generic: {alpha: 0.9, symbol_beta: 0.0, aux_weight: 0.75}}   # aux_weight: see configs/dev.yaml   # beta tuned 0.05 on CosQA valid moved no held-out set
            # beyond noise (CosQA test -0.14, CSN -0.10, APPS generic +0.04; scripts/bench/tune_symbol_beta.py): off   # generic route: weighted fusion, alpha tuned on CosQA valid only
            # [ledger:dev-2c29126949fa]; held out: CosQA test +0.20 [-0.83,+1.22] [ledger:dev-5b0422eda361],
            # CodeSearchNet-Py +0.76 [+0.30,+1.23] [ledger:dev-e5bae0ac27c0] (scripts/bench/reg_fusion.py)
@@ -29,9 +30,9 @@ compose:  {mode_a_scores: rank_derived}
 confidence: {calibration: artifacts/confidence/calibration.json}
 # Provenance only (an operational section: not hashed). Every decision this file encodes, by ledger row.
 gates:
-  G_M: {decision: gte-modernbert-base, ledger: gate-055152620da6, file: configs/gates/G-M.yaml}
+  G_M: {decision: gte-modernbert-base primary + qwen3-embedding-0.6b second encoder, ledger: gate-055152620da6, file: configs/gates/G-M.yaml, superseded_in_part_by: docs/adr/0009-qwen-second-encoder.md}
   G1: {decision: pending — frozen default V0/1024 stands until decided, file: configs/gates/G1.yaml}
   G2: {decision: code tokeniser, file: configs/gates/G2.yaml, note: re-measure from a clean tree before RC1}
   G5: {decision: ship the ranker, file: configs/gates/G5.yaml}
   G3: {decision: pending — Phase 3 runs on a GPU (ADR-0008); frozen base until G3 and G-OOD pass}
-  G_AB: {decision: pending — primary stays B}
+  G_AB: {decision: Mode A primary (dev OOF pipeline vs dense primary encoder; README P0 results)}
