@@ -368,7 +368,7 @@ def load_runtime(
             f"no weights for {card.name} at {directory}. They are fetched once, offline-capable, by the owner "
             "(G0.4 pins them); until then the bake-off cannot run.",
         )
-    return EncoderRuntime(
+    runtime = EncoderRuntime(
         card=card,
         backend=TransformersBackend(card, directory, profile),
         profile=profile,
@@ -376,6 +376,10 @@ def load_runtime(
         prep_hash=prep_hash,
         query_prep_hash=query_prep_hash,
     )
+    if card.token_budget:
+        # The card's own budget: a 0.6 B model at the default budget exhausts a 10 GB host on long documents.
+        runtime.token_budget = int(card.token_budget)
+    return runtime
 
 
 __all__ = [

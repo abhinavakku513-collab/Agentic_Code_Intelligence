@@ -49,6 +49,9 @@ class ModelCard:
     file_sha256: Mapping[str, str] = field(default_factory=dict)
     #: Which task key each route uses, when gate G1 has decided one. Empty means the D4 default mapping below.
     route_tasks: Mapping[str, str] = field(default_factory=dict)
+    #: Tokens per forward batch on this model (None = the runtime default). Bounds activation memory on a CPU host;
+    #: batching never changes a vector (INV-3), so it is not part of the card fingerprint or any cache key.
+    token_budget: int | None = None
 
     # -- instruction formatting ---------------------------------------------------------------------------------
     def task_key_for(self, route: str) -> str:
@@ -159,6 +162,7 @@ def load_card(key: str) -> ModelCard:
         trust_remote_code=False,
         file_sha256={str(k): str(v) for k, v in (raw.get("file_sha256") or {}).items()},
         route_tasks={str(k): str(v) for k, v in (raw.get("route_tasks") or {}).items()},
+        token_budget=int(raw["token_budget"]) if raw.get("token_budget") else None,
     )
 
 

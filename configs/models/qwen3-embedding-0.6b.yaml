@@ -16,6 +16,9 @@ tasks:
     implements a correct solution
   T3: Given a query, retrieve relevant code
 max_tokens: 1024
+# Tokens per forward batch on CPU (activation memory; never changes a vector). The default 16,384 was OOM-killed on a
+# 10 GB host during the cold official pass; 4,096 is what the development embedding used.
+token_budget: 4096
 file_sha256:
   1_Pooling/config.json: 37bf193fa101f19101bfad9c31d3eb0f786e247b7b1e5cb7f007d730eed1ddbd
   config.json: b5bf1f51fc45be473a54718cef92448d90a1be001bf9b9a44b8c7f10a19feaa9
