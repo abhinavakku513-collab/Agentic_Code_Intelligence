@@ -5,7 +5,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 data/
-models/
+# local weight downloads only — configs/models/ (the pinned model cards) is part of the repository
+/models/
 runs/*/
 !runs/ledger.jsonl
 CLAUDE.local.md

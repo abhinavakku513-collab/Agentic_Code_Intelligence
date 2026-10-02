@@ -1,0 +1,20 @@
+name: Alibaba-NLP/gte-modernbert-base
+base_commit: e7f32e3c00f91d699e8c43b53106206bcc72bb22
+licence: apache-2.0
+trust_remote_code: false
+pooling: cls
+normalize: true
+padding_side: right
+query_template: ''
+document_template: '{text}'
+tasks: {}
+max_tokens: 1024
+file_sha256:
+  1_Pooling/config.json: 4bf279dd9204db673304cab6e7db8448f427412a0d87f04c3e19f1de55dd98cd
+  config.json: 8ba54dc3d35d7194f5178a4194b649f146753e02dabd22bdca5c5cbac15069ed
+  config_sentence_transformers.json: f6bbc7812d09c4ae1cba610fbdad3aea0ca9b3b8affe5a130d31709bdbc94e99
+  model.safetensors: 3e85899d5728cb7de79781c0c3acfb91ccef9f875f1f7e0b3c9f3dd4b6a724ba
+  modules.json: 8f4b264b80206c830bebbdcae377e137925650a433b689343a63bdc9b3145460
+  special_tokens_map.json: ea97ecdbcc73713039d8d64dbb05e3689495c96657fbd9a18f5bed381be81049
+  tokenizer.json: 6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30
+  tokenizer_config.json: 9654072f7c873161814043cf08cb5ed72f71d0b935abcd4e267935cb34352c21

@@ -1,0 +1,20 @@
+name: ibm-granite/granite-embedding-english-r2
+base_commit: 47ea694b257b703fee9253d75c2b1f2985180498
+licence: apache-2.0
+trust_remote_code: false
+pooling: cls
+normalize: true
+padding_side: right
+query_template: ''
+document_template: '{text}'
+tasks: {}
+max_tokens: 1024
+file_sha256:
+  1_Pooling/config.json: d81961da36b56f4a1abfbf59a2469e1c49efa04b94a876908c48780894b0b307
+  config.json: bc4ad4e8cd50c0069292863117823f665da70bbbdea40fd4ea77d80609ade241
+  model.safetensors: 23bd9625b32680f180703408ed9d8d7b3a9c1efe4c950111e3ae9d9695b21b29
+  modules.json: 0580fad756940809b1bc064ce1e7c1275c8b0dd80869562fe0abeb6f7059cb97
+  sentence_bert_config.json: 23aa234ef6021d513cdf56947c07aaa6977000d85dcd1fd423f650b3382a39ca
+  special_tokens_map.json: ea97ecdbcc73713039d8d64dbb05e3689495c96657fbd9a18f5bed381be81049
+  tokenizer.json: 6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30
+  tokenizer_config.json: c16f1b07f93d05be753ec0acf8cb511d895a8bdb09669f6b156df81e3f96c2eb
