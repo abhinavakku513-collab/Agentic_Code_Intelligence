@@ -128,6 +128,16 @@ def make_toy_task(name: str = "AcisToyRetrieval") -> AbsTaskRetrieval:
     return ToyTask()
 
 
+def _weights_present() -> bool:
+    from acis.embed.factory import model_dir
+
+    return any(model_dir("gte-modernbert-base").glob("*.safetensors"))
+
+
+#: These contract tests rank a toy task with the real configured encoder; on a fresh clone run `make models` first.
+needs_weights = pytest.mark.skipif(not _weights_present(), reason="needs the pinned encoder weights: run `make models`")
+
+
 @pytest.fixture
 def mode_a(monkeypatch):
     monkeypatch.setenv(MODE_ENV, "A")
@@ -186,6 +196,7 @@ def _evaluate(model: Any, task: AbsTaskRetrieval, prediction_folder=None) -> Any
     return list(result.task_results)[0] if hasattr(result, "task_results") else result
 
 
+@needs_weights
 def test_mode_a_runs_our_pipeline_and_never_calls_encode(mode_a, tmp_path, monkeypatch):
     monkeypatch.setenv("ACIS_RUN_DIR", str(tmp_path))
     task_result = _evaluate(mode_a, make_toy_task())
@@ -195,6 +206,7 @@ def test_mode_a_runs_our_pipeline_and_never_calls_encode(mode_a, tmp_path, monke
     assert 0.0 <= scores["ndcg_at_10"] <= 1.0
 
 
+@needs_weights
 def test_mode_b_runs_through_the_encoder_wrapper(mode_b, tmp_path, monkeypatch):
     monkeypatch.setenv("ACIS_RUN_DIR", str(tmp_path))
     task_result = _evaluate(mode_b, make_toy_task())
@@ -203,6 +215,7 @@ def test_mode_b_runs_through_the_encoder_wrapper(mode_b, tmp_path, monkeypatch):
     assert 0.0 <= task_result.scores["test"][0]["ndcg_at_10"] <= 1.0
 
 
+@needs_weights
 def test_both_modes_agree_for_the_same_encoder(mode_a, mode_b, tmp_path, monkeypatch):
     """Parity P1: our SearchProtocol path and mteb's own wrapper must rank the same documents the same way."""
     monkeypatch.setenv("ACIS_RUN_DIR", str(tmp_path))
@@ -212,6 +225,7 @@ def test_both_modes_agree_for_the_same_encoder(mode_a, mode_b, tmp_path, monkeyp
     assert a["mrr_at_10"] == pytest.approx(b["mrr_at_10"], abs=1e-9)
 
 
+@needs_weights
 def test_search_returns_min_top_k_and_n_entries(mode_a):
     """INV-10, and the reason spec 09 §4 corrected 'exactly 1,000' to `min(top_k, N)`."""
     corpus, queries, _ = _toy_rows()
@@ -226,6 +240,7 @@ def test_search_returns_min_top_k_and_n_entries(mode_a):
         assert set(scores) <= {row["id"] for row in corpus}
 
 
+@needs_weights
 def test_search_respects_top_ranked_restriction(mode_a):
     corpus, queries, _ = _toy_rows()
     task = make_toy_task()
@@ -252,6 +267,7 @@ def _as_dataset(rows: list[dict[str, str]]):
 
 
 # -- run manifest ----------------------------------------------------------------------------------------------------
+@needs_weights
 def test_search_writes_a_run_manifest_proving_our_code_ran(mode_a, tmp_path, monkeypatch):
     monkeypatch.setenv("ACIS_RUN_DIR", str(tmp_path))
     _evaluate(mode_a, make_toy_task())
