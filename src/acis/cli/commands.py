@@ -72,6 +72,7 @@ def _fetch_models(args: argparse.Namespace) -> int:
     mode (a pickle that executes on load) and a different licence question (D4).
     """
     from acis.embed import modelfetch
+    from acis.embed.registry import load_card
 
     keys = [k.strip() for k in args.models.split(",") if k.strip()]
     if not keys:
@@ -92,6 +93,8 @@ def _fetch_models(args: argparse.Namespace) -> int:
         print(f"  -> {fetched.model_dir}")
         if args.pin:
             print(f"  pinned: {modelfetch.pin_card(fetched)}")
+        elif load_card(key).base_commit == fetched.commit and load_card(key).file_sha256:
+            print("  matches the commit pinned in its model card (`--verify` re-hashes every file)")
         else:
             print("  not pinned: re-run with --pin to write the commit and file hashes into the card (G0.4)")
     return 0
