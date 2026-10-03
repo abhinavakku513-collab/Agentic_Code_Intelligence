@@ -11,7 +11,7 @@ Source of truth: the Theme 1 guidelines and FAQ (`docs/official/theme1_guideline
 | APPS (Python) only (FAQ) | Python only; JS ignored as instructed | README §2 |
 | **P0** screening: CoIR AppsRetrieval **test** split, **NDCG@10** and **MRR** | Official run via MTEB on the test split; both metrics are in MTEB's JSON | README §10–11 |
 | Use the **MTEB** library: `AbsEncoder` subclass → `mteb.get_task("AppsRetrieval")` → `mteb.evaluate(..., encode_kwargs={"batch_size": 64})` → JSON of `task_result.to_dict()` | `PrePostPipelineEncoder(AbsEncoder)` in `src/acis/mteb_adapter.py`; `make rc-official` / `make reproduce` run exactly that recipe; `write_official_json` = `json.dump(task_result.to_dict())` with a date-safe encoder | README §10 |
-| JSON with the inference on the test split, uploaded as a **GitHub Release** asset | `appsretrieval_results.json` attached to the release | README §11, GitHub Releases |
+| JSON with the inference on the test split, uploaded as a **GitHub Release** asset | `appsretrieval_results.json` (NDCG@10 78.283, MRR@10 74.393 on `test`) attached to Release v1.0.0; copy in `docs/evidence/test/` | README §6, §11 |
 | GitHub repo with instructions on how to run the submission | Beginner install / run / search / evaluate instructions; judge quick start | README §7–10, §15 |
 | Attach any files needed as Release artifacts | Release also carries the prebuilt vector packs (optional speed-up) | README §7 |
 | **P1**: retrieval on different versions; rebuild indexes/caches in reasonable time | Immutable snapshot per version, incremental embedding, atomic activation, rollback; ~2 s p95 for a 1–10 unit change `[ledger:bench-9153e49050de]` | README §12 |

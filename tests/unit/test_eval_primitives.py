@@ -295,3 +295,13 @@ def test_a_dev_row_is_allowed_from_a_dirty_tree(isolated_ledger, monkeypatch):
         rung="bm25_acis", run={}, metrics={"ndcg_at_10": 0.5}, seconds=1.0, n_queries=200, n_docs=8765
     )
     assert ladder.record(result, kind="dev").startswith("dev-")
+
+
+def test_rescore_tolerance_follows_the_precision_mteb_wrote():
+    """mteb 2.21 rounds ndcg_at_10 to five decimals and leaves mrr_at_10 unrounded; the check must allow exactly the
+    rounding and nothing more."""
+    from acis.eval.verify import rescore_tolerance
+
+    assert rescore_tolerance(0.78283) == 5e-06
+    assert rescore_tolerance(0.7439315752861569) == 1e-09
+    assert rescore_tolerance(0.5) == 5e-06  # never looser than mteb's own rounding

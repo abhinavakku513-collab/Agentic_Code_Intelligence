@@ -1,0 +1,19 @@
+verify-submission: /home/acis/acis/runs/rc1-20261002T191827
+  [PASS] run directory exists
+  [PASS] result JSON present
+  [PASS] scores[<split>][0].ndcg_at_10 — test: 0.782830
+  [PASS] dataset_revision is pinned — f22508f96b7a
+  [PASS] mteb_version recorded — 2.21.0
+  [PASS] evaluation_time above floor — 27849.0s
+  [PASS] run manifest present
+  [PASS] manifest.fallbacks == 0 — 0 (no degradation was recorded)
+  [PASS] manifest.agent_calls == 0 — 0 (INV-13)
+  [PASS] manifest.strict is true — True
+  [PASS] not a harness dry run
+  [PASS] our code ran, on the dispatch path the mode requires — Mode A: adapter_invocations=1 (want 1), encode_calls=0 (want 0)
+  [PASS] model revision matches manifest — predictions: 280454985c1b+68b5a3b4e3a0 vs manifest 280454985c1b+68b5a3b4e3a0
+  [PASS] the JSONs match the modes that ran — mode A: expected ['appsretrieval_results.modeA.json'], found ['appsretrieval_results.modeA.json']
+  [SKIP] run.trec re-scores to the JSON — no qrels supplied (held-out labels are read by acis.eval.final)
+  [PASS] held-out touches agree with the ledger — manifest 1, this run's ledger row 1, ledger total 1/6
+  [PASS] checksums valid
+  verdict: PASS (1 skipped)

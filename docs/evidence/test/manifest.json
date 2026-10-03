@@ -1,0 +1,20 @@
+{
+  "adapter_invocations": 1,
+  "encode_calls": 0,
+  "mode": "A",
+  "strict": true,
+  "harness_dry_run": false,
+  "agent_calls": 0,
+  "fallbacks": 0,
+  "degradations": [],
+  "test_touch_count": 1,
+  "config_hash": "68b5a3b4e3a0d4dd9c8ac068f7be97efd0284043931000fe5a18df7f48c6704b",
+  "model_revision": "280454985c1b+68b5a3b4e3a0",
+  "model_fingerprint": "85bb295aa2f86a7e0aa6cf722caddac04c2fa3d453489111d402da641b8874fe",
+  "snapshot_id": "s_4038d464331905e5",
+  "task": "AppsRetrieval",
+  "split": "test",
+  "dataset_revision": "f22508f96b7a36c2415181ed8bb76f76e04ae2d5",
+  "started_ts": 1790968707.1667802,
+  "written_ts": 1790996527.5428247
+}

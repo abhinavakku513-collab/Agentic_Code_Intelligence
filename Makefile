@@ -1,7 +1,7 @@
 # ACIS Makefile — thin wrappers; logic lives in the `acis` CLI and scripts/.
 PY ?= uv run
 FAST_DIRS := $(wildcard tests/unit tests/security tests/contract tests/robustness)
-.PHONY: setup models rc-smoke fetch fetch-models doctor lint typecheck test test-fast test-security robustness bench eval-dev gate rc-official reproduce reproduce-cache demo preflight evidence
+.PHONY: setup models rc-smoke rc-verify fetch fetch-models doctor lint typecheck test test-fast test-security robustness bench eval-dev gate rc-official reproduce reproduce-cache demo preflight evidence
 
 setup:            ; uv sync
 fetch:            ; $(PY) acis fetch
@@ -37,6 +37,14 @@ rc-smoke:
 	HF_HOME=$$SEAL/hf HF_DATASETS_CACHE=$$SEAL/hf/datasets $(PY) python -m acis.eval.final --smoke --warm && \
 	HF_HOME=$$SEAL/hf HF_DATASETS_CACHE=$$SEAL/hf/datasets HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
 	$(PY) python -m acis.eval.final --smoke
+
+# After the official run: re-score its run.trec against the held-out labels (only this module reads them) and check
+# that it reproduces the MTEB JSON's NDCG@10 and MRR@10 (parity P3). Usage: make rc-verify RUN=runs/<rc-run-dir>
+rc-verify:
+	@test -n "$(RUN)" || { echo "usage: make rc-verify RUN=runs/<rc-run-dir>"; exit 64; }
+	SEAL=$${ACIS_SEALED_HOME:-$$HOME/.acis-sealed}; \
+	HF_HOME=$$SEAL/hf HF_DATASETS_CACHE=$$SEAL/hf/datasets HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 \
+	$(PY) python -m acis.eval.final $(RUN)
 
 # JUDGE QUICK START (README opens with expected runtimes per hardware tier)
 reproduce:        ; $(PY) acis eval official --config configs/official.yaml --cold --strict --reproduce --force --out runs/reproduce

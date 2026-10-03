@@ -52,5 +52,7 @@ reranker was not pursued: on this CPU it would cost tens of hours on the TEST qu
 - CPU time on the 8-core dev host: Qwen embeds a corpus document in ~1.8–2.3 s and a full problem statement in
   ~1.5–2 s (fp32). The cold official pass therefore exceeds D4's 4 h SLO on this host; the SLO is relaxed for P0
   by this ADR and the measured cold time is reported, never replaced by a warm one (D17).
+- Measured: the cold official pass took **27,849 s (7.7 h)** on the 8-core dev host `[ledger:rc-bd2285335a86]`, with
+  Qwen batches capped at 4,096 tokens (`token_budget` in its model card) to stay inside 10 GB of RAM.
 - bf16 was ~4× *slower* on this CPU and dynamic int8 broke the vectors (cosine 0.33–0.56 to fp32), so fp32 stays.
 - Interactive queries pay one extra Qwen forward pass (~1–2 s for a long statement, less for a short question).

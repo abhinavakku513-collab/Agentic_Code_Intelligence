@@ -6,8 +6,9 @@ FAIL or SKIP with a reason — a skipped check is never counted as a pass.
 Checks: the result JSON parses and carries `ndcg_at_10` · the dataset revision is the pinned one · the mteb version
 is recorded · the model revision equals the manifest's `<git12>+<config12>` · the manifest shows
 `adapter_invocations == 1`, `fallbacks == 0`, `strict == true`, `agent_calls == 0` · the held-out touch count agrees
-with the ledger · re-scoring `run.trec` reproduces the JSON's NDCG@10 and MRR@10 to 1e-9 (parity P3) · both mode
-JSONs are present · `evaluation_time` clears a floor (a zero-time run did not run) · the checksums match.
+with the ledger · re-scoring `run.trec` reproduces the JSON's NDCG@10 and MRR@10 to 1e-9, or to the precision
+MTEB wrote (parity P3) · both mode JSONs are present · `evaluation_time` clears a floor (a zero-time run did not
+run) · the checksums match.
 """
 
 from __future__ import annotations
@@ -30,6 +31,23 @@ MODE_B_JSON = "appsretrieval_results.modeB.json"
 MANIFEST_JSON = "manifest.json"
 CHECKSUMS = "SHA256SUMS"
 RESCORE_TOLERANCE = 1e-9
+MTEB_ROUNDING_TOLERANCE = 5e-6
+
+
+def rescore_tolerance(written: float) -> float:
+    """1e-9, or half the last decimal place of the value as MTEB wrote it — whichever is looser.
+
+    mteb 2.21 rounds some metrics in its JSON to five decimals (`ndcg_at_10: 0.78283`) and leaves others unrounded
+    (`mrr_at_10: 0.7439315752861569`). An exact re-score of a rounded value can differ by up to half a unit in its
+    last place; anything beyond that is still a real mismatch.
+    """
+    text = repr(float(written))
+    decimals = len(text.split(".", 1)[1]) if "." in text and "e" not in text else 16
+    # Never looser than mteb's own rounding (five decimals): a value that merely *looks* short, such as an exact 0.5,
+    # does not buy a wider tolerance.
+    return min(MTEB_ROUNDING_TOLERANCE, max(RESCORE_TOLERANCE, 0.5 * 10.0 ** (-decimals)))
+
+
 EVALUATION_TIME_FLOOR_S = 1.0
 
 PASS, FAIL, SKIP = "PASS", "FAIL", "SKIP"
@@ -303,15 +321,19 @@ def verify_submission(run_dir: str | Path, *, qrels: Mapping[str, Mapping[str, i
             "ndcg_at_10": abs(rescored["ndcg_at_10"] - float(ndcg10)),
             **({"mrr_at_10": abs(rescored["mrr_at_10"] - float(mrr10))} if mrr10 is not None else {}),
         }
-        worst = max(deltas.values())
+        limits = {
+            "ndcg_at_10": rescore_tolerance(float(ndcg10)),
+            **({"mrr_at_10": rescore_tolerance(float(mrr10))} if mrr10 is not None else {}),
+        }
+        within = all(deltas[k] <= limits[k] for k in deltas)
         # The query count is reported alongside the deltas because the usual cause of a mismatch is not a wrong
         # score but a different denominator: TREC format cannot express "this query was graded and ranked
         # nothing", so such a query is absent from the file and the two means are over different query sets.
         scored_here = len(set(run) & set(qrels))
         report.add(
             "run.trec re-scores to the JSON",
-            PASS if worst <= RESCORE_TOLERANCE else FAIL,
-            ", ".join(f"Δ{k}={v:.3e}" for k, v in deltas.items()) + f" over {scored_here} queries",
+            PASS if within else FAIL,
+            ", ".join(f"Δ{k}={v:.3e} (≤ {limits[k]:.0e})" for k, v in deltas.items()) + f" over {scored_here} queries",
         )
 
     # -- ledger ---------------------------------------------------------------------------------------------

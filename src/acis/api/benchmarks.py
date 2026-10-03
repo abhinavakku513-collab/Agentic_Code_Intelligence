@@ -368,7 +368,6 @@ def official_result() -> dict[str, Any]:
         "evaluation_time": row.get("evaluation_time"),
         "cold": row.get("cold"),
         "model_revision": row.get("model_revision"),
-        "git_sha": row.get("git_sha"),
         "recorded": _iso(row.get("ts")),
         "ledger_chain_intact": not ledger.verify_chain(),
     }
@@ -448,7 +447,24 @@ def render_headline(runs: Mapping[str, Any]) -> str:
         f"ledger <code>{_esc(full['run_id'])}</code>"
         f"{' · chain and artifact verified' if verified else ' · <b>integrity check failed</b>'}</div>"
     )
+    official = official_result()
+    if official.get("available"):
+        m = official.get("metrics") or {}
+        tiles.append(
+            '<div class="kpi-foot"><b>Official result, AppsRetrieval TEST split (MTEB):</b> '
+            f"NDCG@10 {format_points(m.get('ndcg_at_10'))} · MRR@10 {format_points(m.get('mrr_at_10'))} · "
+            f"ledger <code>{_esc(official['run_id'])}</code> — the tiles above are DEV numbers</div>"
+        )
     return "".join(tiles)
 
 
-__all__ = ["format_points", "latest_pipeline_runs", "per_query", "query_detail", "render_headline", "render_panel"]
+__all__ = [
+    "format_points",
+    "latest_pipeline_runs",
+    "official_result",
+    "per_query",
+    "query_detail",
+    "render_headline",
+    "render_official",
+    "render_panel",
+]

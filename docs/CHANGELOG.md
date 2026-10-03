@@ -11,9 +11,14 @@ architecture is frozen at this point; the official TEST run is the final evaluat
 pseudo-relevance feedback, the statement-only query view, pool-context features, larger rankers, the xendcg
 objective, the ranker on every route. MTEB Mode A and the engine rank DEV queries identically (300/300 top-100 lists).
 
+**Official TEST result (AppsRetrieval test split, MTEB, cold, Mode A):** NDCG@10 **78.283**, MRR@10 **74.393**,
+evaluation_time 27,849 s `[ledger:rc-bd2285335a86]`; `verify-submission` PASS including the held-out re-score.
+
 **Correctness and honesty fixes.** The second encoder follows the primary's cache policy, so a cold official run stays
 cold; a strict run refuses a configured channel that cannot load; a cold run encodes each query once instead of twice;
-`rank_dense2` is the whole-corpus rank for every candidate; the CLI, API and UI name both encoders and the fusion mix.
+`rank_dense2` is the whole-corpus rank for every candidate; the CLI, API and UI name both encoders and the fusion mix;
+Qwen's forward batches are capped at 4,096 tokens (the cold run was OOM-killed at the default); the submission
+verifier allows exactly MTEB's own 5-decimal rounding when re-scoring against the JSON.
 
 **Submission tooling.** `make models` (pinned download + verification), `make rc-smoke` (fills the sealed dataset cache
 through MTEB's own loader, then proves the offline load), per-encoder prebuilt vector packs (`acis demo-index
