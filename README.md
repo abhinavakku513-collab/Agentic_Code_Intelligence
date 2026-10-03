@@ -139,6 +139,11 @@ Provenance: mteb 2.21.0 · dataset `CoIR-Retrieval/apps@f22508f96b7a` · model r
 `verify-submission` PASS, including re-scoring the submitted run file against the held-out labels (NDCG@10 within
 5.8e-7 of the JSON's 5-decimal value, MRR@10 exact) — [docs/evidence/test](docs/evidence/test/).
 
+**Robustness (DEV, after the freeze):** on 9 families of perturbed queries (typos, lower-casing, dropped sentences,
+truncation …) the pipeline passes 6 of 9 robustness limits and stays 16–19 NDCG@10 points above dense retrieval under
+every perturbation; three families exceed their limits with confidence intervals spanning zero
+([details](docs/evidence/p0/README.md)).
+
 **TEST is lower than DEV (78.28 vs 87.07 NDCG@10).** DEV is the APPS train split; nothing was tuned on TEST, and
 the result is reported as it came out. The TEST split was never used to choose anything.
 

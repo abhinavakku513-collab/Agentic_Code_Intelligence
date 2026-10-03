@@ -15,6 +15,7 @@ out of fold (5 folds, each fold ranked by a model that never saw it).
 | `failure_buckets.json`, `failure_buckets_per_query.jsonl` | every dev query bucketed: top1 / top10 / ranking failure / union failure / missing from all | `scripts/bench/failure_buckets.py` |
 | `qwen_subcorpus_probe.json` | the first sizing probe (400 queries, 2,873 cached documents) that justified embedding the full corpus with Qwen | `scripts/bench/qwen_probe.py` |
 | `parity_mteb_vs_engine.json` | 300 DEV queries ranked by `mteb.evaluate` with the adapter (Mode A) and by a separately built engine: identical top-100 lists | `scripts/bench/parity_mteb_engine.py` |
+| G-OOD (ledger rows `dev-88f75c495660` … `dev-6804437b5a4b`) | robustness of the frozen pipeline to 9 query perturbations, 200 DEV queries per family, out of fold: 6 of 9 pass; format_noise (+0.24, limit 0.0), sentence_dropout (+1.88) and truncate (+1.03, limit 1.0) exceed their limits with CIs spanning zero; under every perturbation the pipeline stays 16–19 NDCG@10 points above dense retrieval | `scripts/bench/g_ood_engine.py --sample 200 --record` |
 | `generic_fusion_csn_python.json` | the generic route's Qwen weight on human-written CodeSearchNet-Python queries (w = 0.75: +3.58 NDCG@10) | `scripts/bench/reg_aux_weight.py` |
 
 The hash-chained ledger (`runs/ledger.jsonl`) holds the recorded rows; `docs/adr/0009-qwen-second-encoder.md`
